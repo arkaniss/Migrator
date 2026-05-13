@@ -1,0 +1,375 @@
+using System.Data;
+using System.Globalization;
+using System.Text;
+using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
+using Migrator.Core;
+using Migrator.Infrastructure.Data;
+
+namespace Migrator.Infrastructure.Migration;
+
+public sealed class SqlServerMigrationExecutor : IMigrationExecutor
+{
+    private const string StagingTableName = "#migr_staging";
+
+    public async Task<MigrationExecutionSummary> ExecuteAsync(
+        MigrationPlan plan,
+        MigrationExecutionOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        var validation = MigrationPlanValidator.ValidateForExecution(plan);
+        if (!validation.IsValid)
+        {
+            return MigrationExecutionSummary.FromValidation(validation);
+        }
+
+        var sourceCs = SqlServerConnectionStringFactory.Build(plan.Source);
+        var targetCs = SqlServerConnectionStringFactory.Build(plan.Target);
+
+        await using var sourceCtx = new SessionDbContext(SessionDbContextFactory.CreateOptions(sourceCs));
+        await using var targetCtx = new SessionDbContext(SessionDbContextFactory.CreateOptions(targetCs));
+
+        await sourceCtx.Database.OpenConnectionAsync(cancellationToken);
+        await targetCtx.Database.OpenConnectionAsync(cancellationToken);
+
+        var sourceSql = (SqlConnection)sourceCtx.Database.GetDbConnection();
+        var targetSql = (SqlConnection)targetCtx.Database.GetDbConnection();
+
+        var results = new List<TableMigrationResult>();
+        var overallSuccess = true;
+
+        foreach (var table in plan.Tables)
+        {
+            TableMigrationResult row;
+            try
+            {
+                row = await ProcessTableAsync(
+                    sourceSql,
+                    targetSql,
+                    table,
+                    options,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                overallSuccess = false;
+                row = new TableMigrationResult(table.Source, table.Target, 0, 0, ex.Message);
+            }
+
+            results.Add(row);
+            if (row.Error is not null)
+            {
+                overallSuccess = false;
+                break;
+            }
+        }
+
+        return MigrationExecutionSummary.Completed(results, overallSuccess);
+    }
+
+    private static async Task<TableMigrationResult> ProcessTableAsync(
+        SqlConnection sourceConn,
+        SqlConnection targetConn,
+        TableMapping table,
+        MigrationExecutionOptions options,
+        CancellationToken cancellationToken)
+    {
+        var sourceQualified = SqlIdentifier.Qualify(table.Source);
+        var targetQualified = SqlIdentifier.Qualify(table.Target);
+
+        var rowsRead = await CountRowsAsync(sourceConn, sourceQualified, cancellationToken);
+
+        if (options.DryRun)
+        {
+            return new TableMigrationResult(table.Source, table.Target, rowsRead, 0, null);
+        }
+
+        await using var tx = (SqlTransaction)await targetConn.BeginTransactionAsync(cancellationToken);
+
+        try
+        {
+            if (IsTruncateReload(table.Mode))
+            {
+                await TryTruncateTargetAsync(targetConn, tx, targetQualified, cancellationToken);
+            }
+
+            if (IsUpsert(table.Mode))
+            {
+                await UpsertAsync(
+                    sourceConn,
+                    targetConn,
+                    tx,
+                    table,
+                    sourceQualified,
+                    targetQualified,
+                    cancellationToken);
+            }
+            else
+            {
+                await BulkInsertAsync(
+                    sourceConn,
+                    targetConn,
+                    tx,
+                    table,
+                    sourceQualified,
+                    targetQualified,
+                    cancellationToken);
+            }
+
+            await tx.CommitAsync(cancellationToken);
+            return new TableMigrationResult(table.Source, table.Target, rowsRead, rowsRead, null);
+        }
+        catch
+        {
+            await tx.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    private static async Task<long> CountRowsAsync(
+        SqlConnection sourceConn,
+        string sourceQualified,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"SELECT COUNT_BIG(1) FROM {sourceQualified} AS s;";
+        await using var cmd = new SqlCommand(sql, sourceConn) { CommandTimeout = 0 };
+        var scalar = await cmd.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt64(scalar, CultureInfo.InvariantCulture);
+    }
+
+    private static async Task TryTruncateTargetAsync(
+        SqlConnection targetConn,
+        SqlTransaction tx,
+        string targetQualified,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var truncate = new SqlCommand($"TRUNCATE TABLE {targetQualified};", targetConn, tx)
+            {
+                CommandTimeout = 0,
+            };
+            await truncate.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException)
+        {
+            await using var del = new SqlCommand($"DELETE FROM {targetQualified};", targetConn, tx)
+            {
+                CommandTimeout = 0,
+            };
+            await del.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private static async Task BulkInsertAsync(
+        SqlConnection sourceConn,
+        SqlConnection targetConn,
+        SqlTransaction tx,
+        TableMapping table,
+        string sourceQualified,
+        string targetQualified,
+        CancellationToken cancellationToken)
+    {
+        var selectSql = BuildSelectSql(table, sourceQualified);
+        await using var cmd = new SqlCommand(selectSql, sourceConn) { CommandTimeout = 0 };
+        await using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken);
+
+        using var bulk = new SqlBulkCopy(targetConn, SqlBulkCopyOptions.TableLock, tx)
+        {
+            DestinationTableName = StripBracketsForBulkCopy(targetQualified),
+            BulkCopyTimeout = 0,
+            EnableStreaming = true,
+        };
+
+        foreach (var map in table.Columns)
+        {
+            var targetCol = ResolveTargetColumn(map);
+            bulk.ColumnMappings.Add(targetCol, targetCol);
+        }
+
+        await bulk.WriteToServerAsync(reader, cancellationToken);
+    }
+
+    /// <summary>
+    /// SqlBulkCopy espera el nombre de tabla sin corchetes en la mayoría de casos; para esquema.tabla usa [dbo].[T] como "dbo.T" puede fallar — usamos tres partes? Actually DestinationTableName for dbo.Table is "dbo.Table" string without brackets per MS docs.
+    /// </summary>
+    private static string StripBracketsForBulkCopy(string bracketedQualified)
+    {
+        // Convierte [dbo].[Cliente] -> dbo.Cliente
+        var parts = bracketedQualified.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length != 2)
+        {
+            return bracketedQualified;
+        }
+
+        return $"{Unbracket(parts[0])}.{Unbracket(parts[1])}";
+    }
+
+    private static string Unbracket(string part) => part.Trim().TrimStart('[').TrimEnd(']').Replace("]]", "]", StringComparison.Ordinal);
+
+    private static async Task UpsertAsync(
+        SqlConnection sourceConn,
+        SqlConnection targetConn,
+        SqlTransaction tx,
+        TableMapping table,
+        string sourceQualified,
+        string targetQualified,
+        CancellationToken cancellationToken)
+    {
+        var targetKeys = ResolveTargetKeys(table);
+        if (targetKeys.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Modo upsert: KeyColumns debe indicar columnas de origen que existan en el mapeo (o nombres de columna destino).");
+        }
+
+        await DropStagingIfExistsAsync(targetConn, tx, cancellationToken);
+
+        var createStaging = $@"
+SELECT TOP (0) *
+INTO {StagingTableName}
+FROM {targetQualified};";
+
+        await using (var create = new SqlCommand(createStaging, targetConn, tx) { CommandTimeout = 0 })
+        {
+            await create.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var selectSql = BuildSelectSql(table, sourceQualified);
+        await using (var cmd = new SqlCommand(selectSql, sourceConn) { CommandTimeout = 0 })
+        await using (var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken))
+        {
+            using var bulk = new SqlBulkCopy(targetConn, SqlBulkCopyOptions.TableLock, tx)
+            {
+                DestinationTableName = StagingTableName,
+                BulkCopyTimeout = 0,
+                EnableStreaming = true,
+            };
+
+            foreach (var map in table.Columns)
+            {
+                var targetCol = ResolveTargetColumn(map);
+                bulk.ColumnMappings.Add(targetCol, targetCol);
+            }
+
+            await bulk.WriteToServerAsync(reader, cancellationToken);
+        }
+
+        var mergeSql = BuildMergeSql(table, targetQualified, targetKeys);
+        await using var mergeCmd = new SqlCommand(mergeSql, targetConn, tx) { CommandTimeout = 0 };
+        await mergeCmd.ExecuteNonQueryAsync(cancellationToken);
+
+        await DropStagingIfExistsAsync(targetConn, tx, cancellationToken);
+    }
+
+    private static async Task DropStagingIfExistsAsync(
+        SqlConnection targetConn,
+        SqlTransaction tx,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            IF OBJECT_ID('tempdb..{StagingTableName}') IS NOT NULL
+                DROP TABLE {StagingTableName};
+            """;
+        await using var cmd = new SqlCommand(sql, targetConn, tx) { CommandTimeout = 0 };
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static string BuildSelectSql(TableMapping table, string sourceQualified)
+    {
+        var sb = new StringBuilder();
+        sb.Append("SELECT ");
+        for (var i = 0; i < table.Columns.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+
+            var col = table.Columns[i];
+            var src = col.Source.Trim();
+            var tgt = ResolveTargetColumn(col);
+            sb.Append('s').Append('.').Append(SqlIdentifier.Bracket(src))
+                .Append(" AS ").Append(SqlIdentifier.Bracket(tgt));
+        }
+
+        sb.Append(" FROM ").Append(sourceQualified).Append(" AS s;");
+        return sb.ToString();
+    }
+
+    private static string BuildMergeSql(TableMapping table, string targetQualified, IReadOnlyList<string> targetKeys)
+    {
+        var keySet = new HashSet<string>(targetKeys, StringComparer.OrdinalIgnoreCase);
+        var updateCols = table.Columns
+            .Select(ResolveTargetColumn)
+            .Where(c => !keySet.Contains(c))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var insertCols = table.Columns.Select(ResolveTargetColumn).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        var on = string.Join(
+            " AND ",
+            targetKeys.Select(k => $"T.{SqlIdentifier.Bracket(k)} = S.{SqlIdentifier.Bracket(k)}"));
+
+        var sb = new StringBuilder();
+        sb.AppendLine(CultureInfo.InvariantCulture, $"MERGE {targetQualified} AS T");
+        sb.AppendLine($"USING {StagingTableName} AS S");
+        sb.AppendLine($"ON ({on})");
+
+        if (updateCols.Count > 0)
+        {
+            var sets = string.Join(
+                ", ",
+                updateCols.Select(c => $"T.{SqlIdentifier.Bracket(c)} = S.{SqlIdentifier.Bracket(c)}"));
+            sb.AppendLine("WHEN MATCHED THEN");
+            sb.AppendLine($"  UPDATE SET {sets}");
+        }
+
+        var insertColList = string.Join(", ", insertCols.Select(SqlIdentifier.Bracket));
+        var insertValList = string.Join(", ", insertCols.Select(c => $"S.{SqlIdentifier.Bracket(c)}"));
+        sb.AppendLine("WHEN NOT MATCHED THEN");
+        sb.AppendLine($"  INSERT ({insertColList})");
+        sb.AppendLine($"  VALUES ({insertValList});");
+
+        return sb.ToString();
+    }
+
+    private static string ResolveTargetColumn(ColumnMapping map) =>
+        string.IsNullOrWhiteSpace(map.Target) ? map.Source.Trim() : map.Target.Trim();
+
+    private static IReadOnlyList<string> ResolveTargetKeys(TableMapping table)
+    {
+        var keys = new List<string>();
+        foreach (var raw in table.KeyColumns)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            var k = raw.Trim();
+            var mapped = table.Columns.FirstOrDefault(c =>
+                string.Equals(c.Source, k, StringComparison.OrdinalIgnoreCase));
+
+            if (mapped is not null)
+            {
+                keys.Add(ResolveTargetColumn(mapped));
+            }
+            else
+            {
+                keys.Add(k);
+            }
+        }
+
+        return keys;
+    }
+
+    private static bool IsUpsert(string? mode) =>
+        !string.IsNullOrWhiteSpace(mode)
+        && string.Equals(mode.Trim(), "upsert", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTruncateReload(string? mode) =>
+        !string.IsNullOrWhiteSpace(mode)
+        && string.Equals(mode.Trim(), "truncateReload", StringComparison.OrdinalIgnoreCase);
+}

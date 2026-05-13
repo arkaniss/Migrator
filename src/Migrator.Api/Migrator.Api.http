@@ -1,0 +1,132 @@
+@Migrator.Api_HostAddress = https://localhost:7010
+
+### Salud
+GET {{Migrator.Api_HostAddress}}/health
+Accept: application/json
+
+### Listar tablas (metadatos)
+POST {{Migrator.Api_HostAddress}}/api/migration/metadata/tables
+Content-Type: application/json
+
+{
+  "connection": {
+    "server": ".",
+    "database": "Origen",
+    "integratedSecurity": true,
+    "trustServerCertificate": true,
+    "encrypt": true
+  }
+}
+
+### Listar columnas de una tabla
+POST {{Migrator.Api_HostAddress}}/api/migration/metadata/columns
+Content-Type: application/json
+
+{
+  "connection": {
+    "server": ".",
+    "database": "Origen",
+    "integratedSecurity": true,
+    "trustServerCertificate": true,
+    "encrypt": true
+  },
+  "table": "dbo.Cliente"
+}
+
+### Validar estructura del plan
+POST {{Migrator.Api_HostAddress}}/api/migration/validate-structure
+Content-Type: application/json
+
+{
+  "source": {
+    "server": ".",
+    "database": "Origen",
+    "integratedSecurity": true,
+    "trustServerCertificate": true,
+    "encrypt": true
+  },
+  "target": {
+    "server": ".",
+    "database": "Destino",
+    "integratedSecurity": true,
+    "trustServerCertificate": true,
+    "encrypt": true
+  },
+  "tables": [
+    {
+      "source": "dbo.Cliente",
+      "target": "dbo.Cliente",
+      "keyColumns": ["IdCliente"],
+      "columns": [
+        { "source": "IdCliente", "target": "clienteId" },
+        { "source": "Nombre", "target": "nombre" }
+      ],
+      "mode": "upsert"
+    }
+  ]
+}
+
+### Validar listo para ejecutar
+POST {{Migrator.Api_HostAddress}}/api/migration/validate-execution
+Content-Type: application/json
+
+{
+  "source": {
+    "server": ".",
+    "database": "Origen",
+    "integratedSecurity": true,
+    "trustServerCertificate": true,
+    "encrypt": true
+  },
+  "target": {
+    "server": ".",
+    "database": "Destino",
+    "integratedSecurity": true,
+    "trustServerCertificate": true,
+    "encrypt": true
+  },
+  "tables": [
+    {
+      "source": "dbo.Cliente",
+      "target": "dbo.Cliente",
+      "keyColumns": ["IdCliente"],
+      "columns": [{ "source": "IdCliente", "target": "clienteId" }],
+      "mode": "upsert"
+    }
+  ]
+}
+
+### Ejecutar migración (dry-run)
+POST {{Migrator.Api_HostAddress}}/api/migration/execute?dryRun=true
+Content-Type: application/json
+
+{
+  "source": {
+    "server": ".",
+    "database": "Origen",
+    "integratedSecurity": true,
+    "trustServerCertificate": true,
+    "encrypt": true
+  },
+  "target": {
+    "server": ".",
+    "database": "Destino",
+    "integratedSecurity": true,
+    "trustServerCertificate": true,
+    "encrypt": true
+  },
+  "tables": [
+    {
+      "source": "dbo.Cliente",
+      "target": "dbo.Cliente",
+      "keyColumns": ["IdCliente"],
+      "columns": [
+        { "source": "IdCliente", "target": "clienteId" },
+        { "source": "Nombre", "target": "nombre" }
+      ],
+      "mode": "upsert"
+    }
+  ]
+}
+
+###

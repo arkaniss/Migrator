@@ -1,0 +1,54 @@
+@using Migrator.Core
+
+<div class="row g-2">
+    <div class="col-12">
+        <label class="form-label">Servidor</label>
+        <InputText class="form-control" @bind-Value="Model.Server" placeholder="localhost o .\\SQLEXPRESS" />
+    </div>
+    <div class="col-12">
+        <label class="form-label">Base de datos</label>
+        <InputText class="form-control" @bind-Value="Model.Database" placeholder="Nombre de la base" />
+    </div>
+    <div class="col-12">
+        <div class="form-check">
+            <InputCheckbox class="form-check-input" id="@($"{_id}_win")" @bind-Value="Model.IntegratedSecurity" />
+            <label class="form-check-label" for="@($"{_id}_win")">Autenticación integrada (Windows)</label>
+        </div>
+    </div>
+    @if (!Model.IntegratedSecurity)
+    {
+        <div class="col-12">
+            <label class="form-label">Usuario SQL</label>
+            <InputText class="form-control" @bind-Value="Model.UserId" autocomplete="off" />
+        </div>
+        <div class="col-12">
+            <label class="form-label">Contraseña</label>
+            <InputText type="password" class="form-control" @bind-Value="passwordBind" autocomplete="new-password" />
+        </div>
+    }
+    <div class="col-md-6">
+        <div class="form-check">
+            <InputCheckbox class="form-check-input" id="@($"{_id}_tsc")" @bind-Value="Model.TrustServerCertificate" />
+            <label class="form-check-label" for="@($"{_id}_tsc")">Confiar en certificado del servidor</label>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="form-check">
+            <InputCheckbox class="form-check-input" id="@($"{_id}_enc")" @bind-Value="Model.Encrypt" />
+            <label class="form-check-label" for="@($"{_id}_enc")">Cifrar conexión</label>
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly string _id = Guid.NewGuid().ToString("N");
+
+    [Parameter, EditorRequired]
+    public SqlServerConnectionInfo Model { get; set; } = default!;
+
+    private string passwordBind
+    {
+        get => Model.Password ?? string.Empty;
+        set => Model.Password = value;
+    }
+}

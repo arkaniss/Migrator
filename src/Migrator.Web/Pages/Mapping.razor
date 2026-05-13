@@ -1,0 +1,869 @@
+@page "/mapeo"
+@using System.Net.Http.Json
+@using System.Text.Json
+@using Migrator.Core
+@inject IHttpClientFactory HttpFactory
+@inject IJSRuntime Js
+
+<PageTitle>Mapeo de tablas</PageTitle>
+
+<h1>Mapeo origen → destino</h1>
+
+<p class="text-muted">
+    Configura origen y destino, carga tablas/columnas vía <strong>Migrator.Api</strong> (<code>wwwroot/appsettings.json</code> → <code>MigratorApi</code>).
+    Para <strong>ejecutar</strong> la migración usa la sección de abajo (dry-run primero). Los snapshots y el estado de ejecución se guardan en <strong>este navegador</strong> (localStorage).
+</p>
+
+<div class="row g-4 mb-3">
+    <div class="col-xl-6">
+        <div class="card h-100">
+            <div class="card-header fw-semibold">Origen</div>
+            <div class="card-body">
+                <ConnectionFields Model="plan.Source" />
+                <button type="button" class="btn btn-outline-primary btn-sm mt-2" @onclick="LoadSourceTablesAsync">Cargar tablas</button>
+                @if (sourceLoadError is not null)
+                {
+                    <div class="text-danger small mt-2">@sourceLoadError</div>
+                }
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-6">
+        <div class="card h-100">
+            <div class="card-header fw-semibold">Destino</div>
+            <div class="card-body">
+                <ConnectionFields Model="plan.Target" />
+                <button type="button" class="btn btn-outline-primary btn-sm mt-2" @onclick="LoadTargetTablesAsync">Cargar tablas</button>
+                @if (targetLoadError is not null)
+                {
+                    <div class="text-danger small mt-2">@targetLoadError</div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (GetPendingSourceTables().Count > 0)
+{
+    <div class="alert alert-light border mb-3">
+        <strong>Tablas de origen aún sin mapeo en el plan</strong> (comparación con la última carga de metadatos):
+        <ul class="mb-0 mt-2 small">
+            @foreach (var p in GetPendingSourceTables())
+            {
+                <li>
+                    <code>@p.QualifiedName</code>
+                    <button type="button" class="btn btn-link btn-sm py-0" @onclick="() => UsePendingAsDraft(p.QualifiedName)">Usar en borrador</button>
+                </li>
+            }
+        </ul>
+    </div>
+}
+
+<h2 class="h5">Tabla en edición</h2>
+<div class="card mb-3">
+    <div class="card-body row g-3">
+        <div class="col-md-6">
+            <label class="form-label">Tabla origen</label>
+            <InputSelect class="form-select" @bind-Value="draftSource">
+                <option value="">— Elegir —</option>
+                @foreach (var t in sourceTables)
+                {
+                    <option value="@t.QualifiedName">@t.QualifiedName</option>
+                }
+            </InputSelect>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">Tabla destino</label>
+            <InputSelect class="form-select" @bind-Value="draftTarget">
+                <option value="">— Elegir —</option>
+                @foreach (var t in targetTables)
+                {
+                    <option value="@t.QualifiedName">@t.QualifiedName</option>
+                }
+            </InputSelect>
+        </div>
+        <div class="col-12">
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="LoadDraftColumnsAsync" disabled="@(string.IsNullOrWhiteSpace(draftSource) || string.IsNullOrWhiteSpace(draftTarget))">Cargar columnas</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm ms-2" @onclick="SuggestByName" disabled="@(sourceColumns.Count == 0 || targetColumns.Count == 0)">Sugerir mapeo por nombre</button>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Modo</label>
+            <InputSelect class="form-select" @bind-Value="draftMode">
+                <option value="insert">insert</option>
+                <option value="upsert">upsert</option>
+                <option value="truncateReload">truncateReload</option>
+            </InputSelect>
+        </div>
+        <div class="col-md-8">
+            <label class="form-label">Columnas clave (coma; nombres en <strong>origen</strong>, modo upsert)</label>
+            <InputText class="form-control" @bind-Value="draftKeys" placeholder="IdCliente, codigo" />
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-6 mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h3 class="h6 mb-0">Columna origen</h3>
+            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AddColumnRow">+ Fila</button>
+        </div>
+    </div>
+    <div class="col-lg-6 mb-3">
+        <h3 class="h6 mb-2">Columna destino</h3>
+    </div>
+</div>
+
+@for (var i = 0; i < columnRows.Count; i++)
+{
+    var index = i;
+    <div class="row g-2 align-items-end mb-2">
+        <div class="col-lg-5">
+            @if (sourceColumns.Count > 0)
+            {
+                <InputSelect class="form-select" @bind-Value="columnRows[index].Source">
+                    <option value="">—</option>
+                    @foreach (var c in sourceColumns)
+                    {
+                        <option value="@c.Name">@c.Name (@c.DataType)</option>
+                    }
+                </InputSelect>
+            }
+            else
+            {
+                <InputText class="form-control" placeholder="IdCliente" @bind-Value="columnRows[index].Source" />
+            }
+        </div>
+        <div class="col-lg-5">
+            @if (targetColumns.Count > 0)
+            {
+                <InputSelect class="form-select" @bind-Value="columnRows[index].Target">
+                    <option value="">—</option>
+                    @foreach (var c in targetColumns)
+                    {
+                        <option value="@c.Name">@c.Name (@c.DataType)</option>
+                    }
+                </InputSelect>
+            }
+            else
+            {
+                <InputText class="form-control" placeholder="clienteId" @bind-Value="columnRows[index].Target" />
+            }
+        </div>
+        <div class="col-lg-2">
+            @if (columnRows.Count > 1)
+            {
+                <button type="button" class="btn btn-outline-danger w-100" @onclick="() => RemoveColumnRow(index)">Quitar</button>
+            }
+        </div>
+    </div>
+}
+
+<div class="btn-toolbar gap-2 my-3">
+    <button type="button" class="btn btn-primary" @onclick="AddOrUpdateTable">Guardar tabla en el plan</button>
+    <button type="button" class="btn btn-outline-secondary" @onclick="ClearDraft">Limpiar borrador</button>
+</div>
+
+<h2 class="h5">Tablas en el plan (@plan.Tables.Count)</h2>
+@if (plan.Tables.Count == 0)
+{
+    <p class="text-muted">Aún no hay tablas. Completa el borrador y pulsa <em>Guardar tabla en el plan</em>.</p>
+}
+else
+{
+    <div class="d-flex flex-wrap gap-2 mb-2 align-items-center">
+        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="SelectAllForRun">Seleccionar todas</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="SelectNoneForRun">Quitar selección</button>
+        <span class="small text-muted">(@selectedForRun.Count seleccionadas)</span>
+    </div>
+    <ul class="list-group mb-3">
+        @foreach (var (t, idx) in plan.Tables.Select((x, i) => (x, i)))
+        {
+            <li class="list-group-item">
+                <div class="d-flex flex-wrap gap-2 align-items-start">
+                    <div class="form-check mt-1">
+                        <input class="form-check-input" type="checkbox" id="@($"sel_{idx}")"
+                               checked="@selectedForRun.Contains(t.Source)"
+                               @onchange="@(e => ToggleSelectForRun(t.Source, e))" />
+                        <label class="form-check-label visually-hidden" for="@($"sel_{idx}")">Seleccionar @t.Source</label>
+                    </div>
+                    <div class="flex-grow-1">
+                        <strong>@t.Source</strong>
+                        <span class="text-muted">→</span>
+                        <strong>@t.Target</strong>
+                        <span class="badge bg-secondary ms-2">@t.Mode</span>
+                        <div class="small text-muted">@t.Columns.Count columnas · claves: @(t.KeyColumns.Count == 0 ? "—" : string.Join(", ", t.KeyColumns))</div>
+                        @if (lastRunBySource.TryGetValue(t.Source, out var st))
+                        {
+                            <div class="small @(st.Success ? "text-success" : "text-danger")">
+                                Última ejecución: @(st.DryRun ? "dry-run" : "real") · @(st.Success ? "OK" : "Error")
+                                · @st.At.ToLocalTime().ToString("g")
+                                @if (!string.IsNullOrEmpty(st.Message))
+                                {
+                                    <span> — @st.Message</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RemoveTable(t)">Eliminar</button>
+                </div>
+            </li>
+        }
+    </ul>
+}
+
+@if (plan.Tables.Count > 0)
+{
+    <div class="card border-primary mb-4">
+        <div class="card-header bg-primary text-white">Ejecutar migración (API)</div>
+        <div class="card-body">
+            <p class="small text-muted mb-2">
+                <strong>Dry-run</strong>: solo cuenta filas y valida conexión (no escribe). <strong>Real</strong>: modifica el destino según el modo de cada tabla.
+                Puedes enviar <strong>varias tablas en un solo POST</strong> (lote) o <strong>una petición por tabla</strong> (uno a uno).
+            </p>
+            <div class="d-flex flex-wrap gap-2">
+                <button type="button" class="btn btn-outline-info" @onclick="() => ExecuteBatchAsync(true)" disabled="@ExecuteDisabled">Dry-run (lote)</button>
+                <button type="button" class="btn btn-outline-info" @onclick="() => ExecuteSequentialAsync(true)" disabled="@ExecuteDisabled">Dry-run (uno a uno)</button>
+                <button type="button" class="btn btn-danger" @onclick="() => ExecuteBatchAsync(false)" disabled="@ExecuteDisabled">Ejecutar real (lote)</button>
+                <button type="button" class="btn btn-danger" @onclick="() => ExecuteSequentialAsync(false)" disabled="@ExecuteDisabled">Ejecutar real (uno a uno)</button>
+            </div>
+            <p class="small mt-2 mb-0">
+                También puedes llamar al API con <code>POST /api/migration/execute?dryRun=false</code> y el mismo cuerpo JSON que exportas.
+            </p>
+        </div>
+    </div>
+}
+
+<div class="card mb-4">
+    <div class="card-header">Snapshots en este navegador</div>
+    <div class="card-body">
+        <p class="small text-muted">Copia de seguridad del plan + bitácora reciente de ejecuciones al guardar. No sustituye Git ni un servidor de configuración.</p>
+        <div class="row g-2 align-items-end mb-3">
+            <div class="col-md-6">
+                <label class="form-label">Nombre del snapshot</label>
+                <InputText class="form-control" @bind-Value="snapshotName" placeholder="p. ej. Antes de migrar clientes" />
+            </div>
+            <div class="col-md-6">
+                <button type="button" class="btn btn-primary" @onclick="SaveSnapshotAsync" disabled="@(plan.Tables.Count == 0 || string.IsNullOrWhiteSpace(snapshotName))">Guardar snapshot</button>
+            </div>
+        </div>
+        @if (snapshots.Count == 0)
+        {
+            <p class="text-muted small mb-0">No hay snapshots guardados.</p>
+        }
+        else
+        {
+            <ul class="list-group">
+                @foreach (var s in snapshots.OrderByDescending(x => x.SavedAt))
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div>
+                            <strong>@s.Name</strong>
+                            <span class="text-muted small">· @s.SavedAt.ToLocalTime().ToString("g") · @s.Plan.Tables.Count tabla(s)</span>
+                        </div>
+                        <div>
+                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => LoadSnapshotAsync(s.Id)">Cargar</button>
+                            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => DeleteSnapshotAsync(s.Id)">Eliminar</button>
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+</div>
+
+<div class="d-flex flex-wrap gap-2 mb-2">
+    <button type="button" class="btn btn-success" @onclick="DownloadPlan" disabled="@(plan.Tables.Count == 0)">Descargar mapeo.json</button>
+    <label class="btn btn-outline-primary mb-0">
+        Importar JSON
+        <InputFile OnChange="OnImportJson" accept=".json,application/json" class="d-none" />
+    </label>
+</div>
+
+@if (!string.IsNullOrEmpty(statusMessage))
+{
+    <div class="alert alert-info mt-2" style="white-space: pre-wrap;">@statusMessage</div>
+}
+
+@code {
+    private const string SnapshotsKey = "migrator.snapshots.v1";
+    private const string RunStateKey = "migrator.runstate.v1";
+
+    private static readonly JsonSerializerOptions JsonRead = new() { PropertyNameCaseInsensitive = true };
+    private static readonly JsonSerializerOptions JsonWrite = new() { WriteIndented = false };
+
+    private readonly MigrationPlan plan = new();
+
+    private List<SchemaTableDto> sourceTables = new();
+    private List<SchemaTableDto> targetTables = new();
+    private List<SchemaColumnDto> sourceColumns = new();
+    private List<SchemaColumnDto> targetColumns = new();
+
+    private string? sourceLoadError;
+    private string? targetLoadError;
+
+    private string draftSource = string.Empty;
+    private string draftTarget = string.Empty;
+    private string draftMode = "insert";
+    private string draftKeys = string.Empty;
+
+    private readonly List<ColumnRow> columnRows = new() { new(), new() };
+
+    private string? statusMessage;
+
+    private readonly HashSet<string> selectedForRun = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, TableRunState> lastRunBySource = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<TableRunLogEntry> sessionRunLog = new();
+
+    private List<PlanSnapshotEnvelope> snapshots = new();
+    private string snapshotName = string.Empty;
+    private bool storageLoaded;
+
+    private bool ExecuteDisabled => selectedForRun.Count == 0;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || storageLoaded)
+        {
+            return;
+        }
+
+        storageLoaded = true;
+        await LoadBrowserStorageAsync();
+        StateHasChanged();
+    }
+
+    private async Task LoadBrowserStorageAsync()
+    {
+        try
+        {
+            var snapRaw = await Js.InvokeAsync<string?>("migratorLocalStorage.getItem", SnapshotsKey);
+            if (!string.IsNullOrWhiteSpace(snapRaw))
+            {
+                snapshots = JsonSerializer.Deserialize<List<PlanSnapshotEnvelope>>(snapRaw, JsonRead) ?? new List<PlanSnapshotEnvelope>();
+            }
+
+            var runRaw = await Js.InvokeAsync<string?>("migratorLocalStorage.getItem", RunStateKey);
+            if (!string.IsNullOrWhiteSpace(runRaw))
+            {
+                var dict = JsonSerializer.Deserialize<Dictionary<string, TableRunState>>(runRaw, JsonRead);
+                if (dict is not null)
+                {
+                    foreach (var kv in dict)
+                    {
+                        lastRunBySource[kv.Key] = kv.Value;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            /* localStorage puede fallar en modo privado */
+        }
+    }
+
+    private async Task PersistSnapshotsAsync()
+    {
+        var json = JsonSerializer.Serialize(snapshots, JsonWrite);
+        await Js.InvokeVoidAsync("migratorLocalStorage.setItem", SnapshotsKey, json);
+    }
+
+    private async Task PersistRunStateAsync()
+    {
+        var json = JsonSerializer.Serialize(lastRunBySource, JsonWrite);
+        await Js.InvokeVoidAsync("migratorLocalStorage.setItem", RunStateKey, json);
+    }
+
+    private IReadOnlyList<SchemaTableDto> GetPendingSourceTables() =>
+        sourceTables
+            .Where(t => !plan.Tables.Any(p => string.Equals(p.Source, t.QualifiedName, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+    private void UsePendingAsDraft(string qualifiedName)
+    {
+        draftSource = qualifiedName;
+        statusMessage = $"Borrador: origen = {qualifiedName}. Elige tabla destino y columnas.";
+    }
+
+    private void ToggleSelectForRun(string source, ChangeEventArgs e)
+    {
+        var on = e.Value is bool b && b;
+        if (on)
+        {
+            selectedForRun.Add(source);
+        }
+        else
+        {
+            selectedForRun.Remove(source);
+        }
+    }
+
+    private void SelectAllForRun()
+    {
+        selectedForRun.Clear();
+        foreach (var t in plan.Tables)
+        {
+            selectedForRun.Add(t.Source);
+        }
+    }
+
+    private void SelectNoneForRun() => selectedForRun.Clear();
+
+    private List<TableMapping> GetSelectedMappings() =>
+        plan.Tables.Where(t => selectedForRun.Contains(t.Source)).ToList();
+
+    private async Task ExecuteBatchAsync(bool dryRun)
+    {
+        if (!dryRun && !await Js.InvokeAsync<bool>("confirm", "¿Ejecutar migración REAL en el destino para las tablas seleccionadas?"))
+        {
+            return;
+        }
+
+        var tables = GetSelectedMappings();
+        if (tables.Count == 0)
+        {
+            statusMessage = "Selecciona al menos una tabla en el plan.";
+            return;
+        }
+
+        var body = ClonePlanSubset(tables);
+        await PostExecuteAndMergeAsync(body, dryRun, "lote");
+    }
+
+    private async Task ExecuteSequentialAsync(bool dryRun)
+    {
+        if (!dryRun && !await Js.InvokeAsync<bool>("confirm", "¿Ejecutar migración REAL tabla por tabla en el destino?"))
+        {
+            return;
+        }
+
+        var tables = GetSelectedMappings();
+        if (tables.Count == 0)
+        {
+            statusMessage = "Selecciona al menos una tabla en el plan.";
+            return;
+        }
+
+        var client = HttpFactory.CreateClient("MigratorApi");
+        var sb = new System.Text.StringBuilder();
+
+        foreach (var table in tables)
+        {
+            var body = ClonePlanSubset(new List<TableMapping> { table });
+            var resp = await client.PostAsJsonAsync($"api/migration/execute?dryRun={JsonBool(dryRun)}", body);
+            var raw = await resp.Content.ReadAsStringAsync();
+            MigrationExecutionSummary? summary = null;
+            try
+            {
+                summary = JsonSerializer.Deserialize<MigrationExecutionSummary>(raw, JsonRead);
+            }
+            catch
+            {
+                sb.AppendLine($"{table.Source}: respuesta no válida ({resp.StatusCode}).");
+                continue;
+            }
+
+            if (summary is null)
+            {
+                continue;
+            }
+
+            MergeRunResults(summary, dryRun);
+            foreach (var row in summary.Tables ?? Array.Empty<TableMigrationResult>())
+            {
+                sb.AppendLine($"{row.Source}: {(row.Error is null ? $"OK, filas {row.RowsRead}" : row.Error)}");
+            }
+        }
+
+        await PersistRunStateAsync();
+        statusMessage = "Ejecución uno a uno:\n" + sb;
+        StateHasChanged();
+    }
+
+    private static string JsonBool(bool v) => v ? "true" : "false";
+
+    private MigrationPlan ClonePlanSubset(List<TableMapping> tables) =>
+        new()
+        {
+            Source = CloneConn(plan.Source),
+            Target = CloneConn(plan.Target),
+            Tables = tables.Select(t => new TableMapping
+            {
+                Source = t.Source,
+                Target = t.Target,
+                Mode = t.Mode,
+                KeyColumns = t.KeyColumns.ToList(),
+                Columns = t.Columns.Select(c => new ColumnMapping { Source = c.Source, Target = c.Target }).ToList(),
+            }).ToList(),
+        };
+
+    private static SqlServerConnectionInfo CloneConn(SqlServerConnectionInfo c) =>
+        new()
+        {
+            Server = c.Server,
+            Database = c.Database,
+            IntegratedSecurity = c.IntegratedSecurity,
+            UserId = c.UserId,
+            Password = c.Password,
+            TrustServerCertificate = c.TrustServerCertificate,
+            Encrypt = c.Encrypt,
+        };
+
+    private async Task PostExecuteAndMergeAsync(MigrationPlan body, bool dryRun, string modeLabel)
+    {
+        statusMessage = null;
+        try
+        {
+            var client = HttpFactory.CreateClient("MigratorApi");
+            var resp = await client.PostAsJsonAsync($"api/migration/execute?dryRun={JsonBool(dryRun)}", body);
+            var raw = await resp.Content.ReadAsStringAsync();
+            var summary = JsonSerializer.Deserialize<MigrationExecutionSummary>(raw, JsonRead);
+            if (summary is null)
+            {
+                statusMessage = "No se pudo interpretar la respuesta de la API.";
+                return;
+            }
+
+            MergeRunResults(summary, dryRun);
+            await PersistRunStateAsync();
+
+            var lines = (summary.Tables ?? Array.Empty<TableMigrationResult>()).Select(t =>
+                $"{t.Source}: {(t.Error is null ? $"filas leídas {t.RowsRead}" : t.Error)}");
+            statusMessage = $"Ejecución ({modeLabel}) — éxito global: {summary.Success}\n" + string.Join("\n", lines);
+            if (summary.GlobalErrors is { Count: > 0 })
+            {
+                statusMessage += "\nErrores globales:\n" + string.Join("\n", summary.GlobalErrors);
+            }
+        }
+        catch (Exception ex)
+        {
+            statusMessage = ex.Message;
+        }
+    }
+
+    private void MergeRunResults(MigrationExecutionSummary summary, bool dryRun)
+    {
+        foreach (var row in summary.Tables ?? Array.Empty<TableMigrationResult>())
+        {
+            var ok = row.Error is null;
+            lastRunBySource[row.Source] = new TableRunState
+            {
+                At = DateTimeOffset.UtcNow,
+                Success = ok,
+                DryRun = dryRun,
+                Message = row.Error ?? $"Filas: {row.RowsRead}",
+            };
+
+            sessionRunLog.Add(new TableRunLogEntry
+            {
+                At = DateTimeOffset.UtcNow,
+                DryRun = dryRun,
+                Source = row.Source,
+                Success = ok,
+                Details = row.Error ?? $"Filas leídas: {row.RowsRead}",
+            });
+        }
+    }
+
+    private async Task SaveSnapshotAsync()
+    {
+        if (string.IsNullOrWhiteSpace(snapshotName) || plan.Tables.Count == 0)
+        {
+            return;
+        }
+
+        var envelope = new PlanSnapshotEnvelope
+        {
+            Name = snapshotName.Trim(),
+            SavedAt = DateTimeOffset.UtcNow,
+            Plan = MigrationPlanJson.Deserialize(MigrationPlanJson.Serialize(plan)),
+            RunLog = sessionRunLog.TakeLast(100).ToList(),
+        };
+
+        snapshots.Add(envelope);
+        await PersistSnapshotsAsync();
+        snapshotName = string.Empty;
+        statusMessage = $"Snapshot guardado: {envelope.Name}";
+    }
+
+    private async Task LoadSnapshotAsync(string id)
+    {
+        var s = snapshots.FirstOrDefault(x => x.Id == id);
+        if (s is null)
+        {
+            return;
+        }
+
+        var clone = MigrationPlanJson.Deserialize(MigrationPlanJson.Serialize(s.Plan));
+        plan.Source = clone.Source;
+        plan.Target = clone.Target;
+        plan.Tables.Clear();
+        plan.Tables.AddRange(clone.Tables);
+
+        sessionRunLog.Clear();
+        sessionRunLog.AddRange(s.RunLog);
+
+        selectedForRun.Clear();
+        foreach (var t in plan.Tables)
+        {
+            selectedForRun.Add(t.Source);
+        }
+
+        sourceTables = new List<SchemaTableDto>();
+        targetTables = new List<SchemaTableDto>();
+        sourceColumns = new List<SchemaColumnDto>();
+        targetColumns = new List<SchemaColumnDto>();
+
+        statusMessage = $"Snapshot cargado: {s.Name}";
+        await Task.CompletedTask;
+    }
+
+    private async Task DeleteSnapshotAsync(string id)
+    {
+        snapshots.RemoveAll(x => x.Id == id);
+        await PersistSnapshotsAsync();
+        statusMessage = "Snapshot eliminado.";
+    }
+
+    private async Task LoadSourceTablesAsync()
+    {
+        sourceLoadError = null;
+        sourceTables = await FetchTablesAsync(plan.Source, e => sourceLoadError = e);
+    }
+
+    private async Task LoadTargetTablesAsync()
+    {
+        targetLoadError = null;
+        targetTables = await FetchTablesAsync(plan.Target, e => targetLoadError = e);
+    }
+
+    private async Task<List<SchemaTableDto>> FetchTablesAsync(SqlServerConnectionInfo connection, Action<string> onError)
+    {
+        try
+        {
+            var client = HttpFactory.CreateClient("MigratorApi");
+            var response = await client.PostAsJsonAsync("api/migration/metadata/tables", new MetadataTablesRequest(connection));
+            if (!response.IsSuccessStatusCode)
+            {
+                onError(await response.Content.ReadAsStringAsync());
+                return new List<SchemaTableDto>();
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<MetadataTablesResponse>(JsonRead);
+            return payload?.Tables?.ToList() ?? new List<SchemaTableDto>();
+        }
+        catch (Exception ex)
+        {
+            onError(ex.Message);
+            return new List<SchemaTableDto>();
+        }
+    }
+
+    private async Task LoadDraftColumnsAsync()
+    {
+        statusMessage = null;
+        sourceColumns = new List<SchemaColumnDto>();
+        targetColumns = new List<SchemaColumnDto>();
+
+        if (string.IsNullOrWhiteSpace(draftSource) || string.IsNullOrWhiteSpace(draftTarget))
+        {
+            statusMessage = "Selecciona tabla origen y destino.";
+            return;
+        }
+
+        try
+        {
+            var client = HttpFactory.CreateClient("MigratorApi");
+            var srcResp = await client.PostAsJsonAsync(
+                "api/migration/metadata/columns",
+                new MetadataColumnsRequest(plan.Source, draftSource));
+
+            if (!srcResp.IsSuccessStatusCode)
+            {
+                statusMessage = "Origen columnas: " + await srcResp.Content.ReadAsStringAsync();
+                return;
+            }
+
+            var srcPayload = await srcResp.Content.ReadFromJsonAsync<MetadataColumnsResponse>(JsonRead);
+            sourceColumns = srcPayload?.Columns?.ToList() ?? new List<SchemaColumnDto>();
+
+            var tgtResp = await client.PostAsJsonAsync(
+                "api/migration/metadata/columns",
+                new MetadataColumnsRequest(plan.Target, draftTarget));
+
+            if (!tgtResp.IsSuccessStatusCode)
+            {
+                statusMessage = "Destino columnas: " + await tgtResp.Content.ReadAsStringAsync();
+                sourceColumns = new List<SchemaColumnDto>();
+                return;
+            }
+
+            var tgtPayload = await tgtResp.Content.ReadFromJsonAsync<MetadataColumnsResponse>(JsonRead);
+            targetColumns = tgtPayload?.Columns?.ToList() ?? new List<SchemaColumnDto>();
+
+            statusMessage = $"Columnas cargadas: {sourceColumns.Count} origen, {targetColumns.Count} destino.";
+        }
+        catch (Exception ex)
+        {
+            statusMessage = ex.Message;
+        }
+    }
+
+    private void SuggestByName()
+    {
+        columnRows.Clear();
+        foreach (var s in sourceColumns)
+        {
+            var match = targetColumns.FirstOrDefault(t =>
+                string.Equals(t.Name, s.Name, StringComparison.OrdinalIgnoreCase));
+            columnRows.Add(new ColumnRow { Source = s.Name, Target = match?.Name ?? string.Empty });
+        }
+
+        if (columnRows.Count == 0)
+        {
+            columnRows.Add(new ColumnRow());
+            columnRows.Add(new ColumnRow());
+        }
+
+        statusMessage = "Mapeo sugerido por nombre de columna (origen = destino cuando coincide).";
+    }
+
+    private void AddColumnRow() => columnRows.Add(new ColumnRow());
+
+    private void RemoveColumnRow(int index)
+    {
+        if (columnRows.Count <= 1)
+        {
+            return;
+        }
+
+        columnRows.RemoveAt(index);
+    }
+
+    private void AddOrUpdateTable()
+    {
+        statusMessage = null;
+
+        var keys = draftKeys
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => s.Length > 0)
+            .ToList();
+
+        var cols = columnRows
+            .Where(r => !string.IsNullOrWhiteSpace(r.Source) || !string.IsNullOrWhiteSpace(r.Target))
+            .Select(r => new ColumnMapping
+            {
+                Source = r.Source.Trim(),
+                Target = string.IsNullOrWhiteSpace(r.Target) ? r.Source.Trim() : r.Target.Trim(),
+            })
+            .Where(c => c.Source.Length > 0)
+            .ToList();
+
+        if (string.IsNullOrWhiteSpace(draftSource) || string.IsNullOrWhiteSpace(draftTarget))
+        {
+            statusMessage = "Indica tabla origen y destino.";
+            return;
+        }
+
+        if (cols.Count == 0)
+        {
+            statusMessage = "Añade al menos un par de columnas.";
+            return;
+        }
+
+        var mapping = new TableMapping
+        {
+            Source = draftSource.Trim(),
+            Target = draftTarget.Trim(),
+            Mode = draftMode,
+            KeyColumns = keys,
+            Columns = cols,
+        };
+
+        var existing = plan.Tables.FindIndex(t =>
+            string.Equals(t.Source, mapping.Source, StringComparison.OrdinalIgnoreCase));
+
+        if (existing >= 0)
+        {
+            plan.Tables[existing] = mapping;
+            statusMessage = "Tabla actualizada en el plan.";
+        }
+        else
+        {
+            plan.Tables.Add(mapping);
+            statusMessage = "Tabla añadida al plan.";
+        }
+
+        selectedForRun.Add(mapping.Source);
+    }
+
+    private void ClearDraft()
+    {
+        draftSource = string.Empty;
+        draftTarget = string.Empty;
+        draftMode = "insert";
+        draftKeys = string.Empty;
+        columnRows.Clear();
+        columnRows.Add(new());
+        columnRows.Add(new());
+        sourceColumns = new List<SchemaColumnDto>();
+        targetColumns = new List<SchemaColumnDto>();
+        statusMessage = "Borrador limpiado.";
+    }
+
+    private void RemoveTable(TableMapping t)
+    {
+        plan.Tables.Remove(t);
+        selectedForRun.Remove(t.Source);
+        lastRunBySource.Remove(t.Source);
+        statusMessage = "Tabla eliminada del plan.";
+    }
+
+    private async Task DownloadPlan()
+    {
+        statusMessage = null;
+        var json = MigrationPlanJson.Serialize(plan);
+        await Js.InvokeVoidAsync("downloadTextFile", "mapeo.json", json);
+    }
+
+    private async Task OnImportJson(InputFileChangeEventArgs e)
+    {
+        statusMessage = null;
+        var file = e.File;
+        if (file is null)
+        {
+            return;
+        }
+
+        await using var stream = file.OpenReadStream(maxAllowedSize: 2 * 1024 * 1024);
+        using var reader = new StreamReader(stream);
+        var json = await reader.ReadToEndAsync();
+        var imported = MigrationPlanJson.Deserialize(json);
+
+        plan.Source = imported.Source ?? new SqlServerConnectionInfo();
+        plan.Target = imported.Target ?? new SqlServerConnectionInfo();
+        plan.Tables.Clear();
+        plan.Tables.AddRange(imported.Tables);
+
+        selectedForRun.Clear();
+        foreach (var t in plan.Tables)
+        {
+            selectedForRun.Add(t.Source);
+        }
+
+        sourceTables = new List<SchemaTableDto>();
+        targetTables = new List<SchemaTableDto>();
+        sourceColumns = new List<SchemaColumnDto>();
+        targetColumns = new List<SchemaColumnDto>();
+        sourceLoadError = null;
+        targetLoadError = null;
+
+        statusMessage = $"Importado: {plan.Tables.Count} tabla(s). Marca cuáles ejecutar y usa dry-run antes del real.";
+    }
+
+    private sealed class ColumnRow
+    {
+        public string Source { get; set; } = string.Empty;
+
+        public string Target { get; set; } = string.Empty;
+    }
+}

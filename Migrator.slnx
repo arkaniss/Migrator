@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Migrator.Api/Migrator.Api.csproj" />
+    <Project Path="src/Migrator.Core/Migrator.Core.csproj" />
+    <Project Path="src/Migrator.Infrastructure/Migrator.Infrastructure.csproj" />
+    <Project Path="src/Migrator.Web/Migrator.Web.csproj" />
+  </Folder>
+</Solution>
