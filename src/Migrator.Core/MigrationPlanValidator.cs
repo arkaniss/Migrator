@@ -73,6 +73,12 @@ public static class MigrationPlanValidator
                     {
                         errors.Add($"Tablas[{i}] ({label}): la columna origen '{src}' está duplicada.");
                     }
+
+                    var exprErr = SourceExpressionSyntax.Validate(col.SourceExpression);
+                    if (exprErr is not null)
+                    {
+                        errors.Add($"Tablas[{i}] ({label}), columna '{src}': {exprErr}");
+                    }
                 }
             }
         }

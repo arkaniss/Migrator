@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "connections": [
+    {
+      "id": "ejemplo01",
+      "name": "Local · MiBaseOrigen",
+      "lastUsedAt": "2026-05-12T12:00:00+00:00",
+      "connection": {
+        "server": ".",
+        "database": "MiBaseOrigen",
+        "integratedSecurity": true,
+        "trustServerCertificate": true,
+        "encrypt": true
+      }
+    },
+    {
+      "id": "ejemplo02",
+      "name": "Local · MiBaseDestino",
+      "lastUsedAt": "2026-05-12T12:00:00+00:00",
+      "connection": {
+        "server": ".",
+        "database": "MiBaseDestino",
+        "integratedSecurity": true,
+        "trustServerCertificate": true,
+        "encrypt": true
+      }
+    }
+  ]
+}

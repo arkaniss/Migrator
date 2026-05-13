@@ -1,7 +1,7 @@
 ﻿@inherits LayoutComponentBase
-<div class="page">
+<div class="page @(sidebarCollapsed ? "sidebar-collapsed" : null)">
     <div class="sidebar">
-        <NavMenu />
+        <NavMenu SidebarCollapsed="sidebarCollapsed" OnToggleSidebar="ToggleSidebar" />
     </div>
 
     <main>
@@ -14,3 +14,12 @@
         </article>
     </main>
 </div>
+
+@code {
+    private bool sidebarCollapsed;
+
+    private void ToggleSidebar()
+    {
+        sidebarCollapsed = !sidebarCollapsed;
+    }
+}

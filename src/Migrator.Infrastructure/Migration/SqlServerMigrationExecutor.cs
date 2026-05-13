@@ -93,6 +93,11 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
                 await TryTruncateTargetAsync(targetConn, tx, targetQualified, cancellationToken);
             }
 
+            if (table.ReseedToZero)
+            {
+                await TryReseedIdentityToZeroAsync(targetConn, tx, table.Target, cancellationToken);
+            }
+
             if (IsUpsert(table.Mode))
             {
                 await UpsertAsync(
@@ -158,6 +163,53 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
                 CommandTimeout = 0,
             };
             await del.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private static async Task TryReseedIdentityToZeroAsync(
+        SqlConnection targetConn,
+        SqlTransaction tx,
+        string targetQualifiedName,
+        CancellationToken cancellationToken)
+    {
+        SqlIdentifier.ParseTable(targetQualifiedName, out var schema, out var table);
+
+        const string hasIdentitySql = """
+            SELECT TOP (1) 1
+            FROM sys.identity_columns ic
+            INNER JOIN sys.tables t ON t.object_id = ic.object_id
+            INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+            WHERE s.name = @schema AND t.name = @table;
+            """;
+
+        await using (var check = new SqlCommand(hasIdentitySql, targetConn, tx) { CommandTimeout = 60 })
+        {
+            check.Parameters.AddWithValue("@schema", schema);
+            check.Parameters.AddWithValue("@table", table);
+            var has = await check.ExecuteScalarAsync(cancellationToken);
+            if (has is null)
+            {
+                return;
+            }
+        }
+
+        // DBCC CHECKIDENT no acepta nombre de objeto como parámetro directamente: usamos SQL dinámico con literal.
+        var qualified = $"{schema}.{table}";
+        var sql = """
+            DECLARE @q sysname = @qualified;
+            DECLARE @stmt nvarchar(max) = N'DBCC CHECKIDENT(''' + @q + ''', RESEED, 1);';
+            EXEC(@stmt);
+            """;
+
+        try
+        {
+            await using var cmd = new SqlCommand(sql, targetConn, tx) { CommandTimeout = 60 };
+            cmd.Parameters.AddWithValue("@qualified", qualified);
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException)
+        {
+            // Opción opcional: si falla (permisos, etc.), no bloqueamos la migración.
         }
     }
 
@@ -287,14 +339,30 @@ FROM {targetQualified};";
             }
 
             var col = table.Columns[i];
-            var src = col.Source.Trim();
             var tgt = ResolveTargetColumn(col);
-            sb.Append('s').Append('.').Append(SqlIdentifier.Bracket(src))
+            var fragment = GetSourceSelectFragment(col);
+            sb.Append(fragment)
                 .Append(" AS ").Append(SqlIdentifier.Bracket(tgt));
         }
 
         sb.Append(" FROM ").Append(sourceQualified).Append(" AS s;");
         return sb.ToString();
+    }
+
+    private static string GetSourceSelectFragment(ColumnMapping col)
+    {
+        if (!string.IsNullOrWhiteSpace(col.SourceExpression))
+        {
+            var err = SourceExpressionSyntax.Validate(col.SourceExpression);
+            if (err is not null)
+            {
+                throw new InvalidOperationException(err);
+            }
+
+            return col.SourceExpression.Trim();
+        }
+
+        return $"s.{SqlIdentifier.Bracket(col.Source.Trim())}";
     }
 
     private static string BuildMergeSql(TableMapping table, string targetQualified, IReadOnlyList<string> targetKeys)
