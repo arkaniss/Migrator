@@ -24,3 +24,7 @@ public sealed record MetadataColumnsResponse(
 public sealed record MetadataTablesRequest(SqlServerConnectionInfo Connection);
 
 public sealed record MetadataColumnsRequest(SqlServerConnectionInfo Connection, string Table);
+
+public sealed record MysqlMetadataTablesRequest(MySqlConnectionInfo Connection);
+
+public sealed record MysqlMetadataColumnsRequest(MySqlConnectionInfo Connection, string Table);

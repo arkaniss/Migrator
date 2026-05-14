@@ -24,6 +24,19 @@
         "trustServerCertificate": true,
         "encrypt": true
       }
+    },
+    {
+      "id": "ejemplo03",
+      "name": "Docker · MySQL local",
+      "lastUsedAt": "2026-05-12T12:00:00+00:00",
+      "kind": "mySql",
+      "mySql": {
+        "server": "127.0.0.1",
+        "port": 3306,
+        "database": "MiBaseMysql",
+        "userId": "root",
+        "password": ""
+      }
     }
   ]
 }

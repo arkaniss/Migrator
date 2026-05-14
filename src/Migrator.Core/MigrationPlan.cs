@@ -9,11 +9,20 @@ namespace Migrator.Core;
 /// </summary>
 public sealed class MigrationPlan
 {
+    /// <summary>Origen: <c>sqlServer</c> (por defecto) o <c>mySql</c>.</summary>
+    public string SourceKind { get; set; } = "sqlServer";
+
     public SqlServerConnectionInfo Source { get; set; } = new();
+
+    /// <summary>Origen MySQL cuando <see cref="SourceKind"/> es <c>mySql</c>.</summary>
+    public MySqlConnectionInfo? MySqlSource { get; set; }
 
     public SqlServerConnectionInfo Target { get; set; } = new();
 
     public List<TableMapping> Tables { get; set; } = new();
+
+    public bool UsesMySqlSource() =>
+        string.Equals(SourceKind?.Trim(), "mySql", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class TableMapping
@@ -48,8 +57,8 @@ public sealed class ColumnMapping
     public string Target { get; set; } = string.Empty;
 
     /// <summary>
-    /// Fragmento SQL opcional usado en el SELECT del origen en lugar de <c>s.[Source]</c>.
-    /// Debe referenciar la tabla origen con el alias <c>s</c> (p. ej. <c>ISNULL(s.[col], 0)</c>).
+    /// Fragmento SQL opcional usado en el SELECT del origen en lugar del nombre entre corchetes o backticks.
+    /// Debe referenciar la tabla origen con el alias <c>s</c> (p. ej. SQL Server: <c>ISNULL(s.[col], 0)</c>; MySQL: <c>IFNULL(s.`col`,0)</c>).
     /// </summary>
     public string? SourceExpression { get; set; }
 }

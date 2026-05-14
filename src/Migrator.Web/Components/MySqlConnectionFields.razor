@@ -1,0 +1,35 @@
+@using Migrator.Core
+
+<div class="row g-2">
+    <div class="col-12 col-md-8">
+        <label class="form-label">Servidor / host</label>
+        <InputText class="form-control" @bind-Value="Model.Server" placeholder="127.0.0.1 o mysql.ejemplo.com" />
+    </div>
+    <div class="col-12 col-md-4">
+        <label class="form-label">Puerto</label>
+        <InputNumber class="form-control" TValue="int" @bind-Value="Model.Port" placeholder="3306" />
+    </div>
+    <div class="col-12">
+        <label class="form-label">Base de datos</label>
+        <InputText class="form-control" @bind-Value="Model.Database" placeholder="Nombre de la base" />
+    </div>
+    <div class="col-12">
+        <label class="form-label">Usuario</label>
+        <InputText class="form-control" @bind-Value="Model.UserId" autocomplete="username" />
+    </div>
+    <div class="col-12">
+        <label class="form-label">Contraseña</label>
+        <InputText type="password" class="form-control" @bind-Value="passwordBind" autocomplete="new-password" />
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public MySqlConnectionInfo Model { get; set; } = default!;
+
+    private string passwordBind
+    {
+        get => Model.Password ?? string.Empty;
+        set => Model.Password = value;
+    }
+}

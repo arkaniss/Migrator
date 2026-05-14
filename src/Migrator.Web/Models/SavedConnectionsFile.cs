@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json.Serialization;
 using Migrator.Core;
 
 namespace Migrator.Web.Models;
@@ -19,7 +21,15 @@ public sealed class SavedConnectionEntry
 
     public DateTimeOffset LastUsedAt { get; set; } = DateTimeOffset.UtcNow;
 
-    public SqlServerConnectionInfo Connection { get; set; } = new();
+    /// <summary><c>sqlServer</c> o <c>mySql</c>.</summary>
+    public string Kind { get; set; } = "sqlServer";
+
+    /// <summary>Conexión SQL Server cuando <see cref="Kind"/> es <c>sqlServer</c> (nombre JSON histórico: connection).</summary>
+    [JsonPropertyName("connection")]
+    public SqlServerConnectionInfo? Connection { get; set; }
+
+    /// <summary>Conexión MySQL cuando <see cref="Kind"/> es <c>mySql</c>.</summary>
+    public MySqlConnectionInfo? MySql { get; set; }
 }
 
 public static class SavedConnectionFingerprint
@@ -30,6 +40,15 @@ public static class SavedConnectionFingerprint
         var db = (c.Database ?? string.Empty).Trim().ToLowerInvariant();
         var win = c.IntegratedSecurity;
         var user = win ? "" : (c.UserId ?? string.Empty).Trim().ToLowerInvariant();
-        return $"{server}|{db}|{win}|{user}";
+        return $"sql|{server}|{db}|{win}|{user}";
+    }
+
+    public static string Of(MySqlConnectionInfo c)
+    {
+        var server = (c.Server ?? string.Empty).Trim().ToLowerInvariant();
+        var port = c.Port.ToString(CultureInfo.InvariantCulture);
+        var db = (c.Database ?? string.Empty).Trim().ToLowerInvariant();
+        var user = (c.UserId ?? string.Empty).Trim().ToLowerInvariant();
+        return $"mysql|{server}|{port}|{db}|{user}";
     }
 }

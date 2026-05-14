@@ -1,16 +1,24 @@
 using System.Data;
+using System.Data.Common;
 using System.Globalization;
 using System.Text;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Migrator.Core;
 using Migrator.Infrastructure.Data;
+using MySqlConnector;
 
 namespace Migrator.Infrastructure.Migration;
 
 public sealed class SqlServerMigrationExecutor : IMigrationExecutor
 {
     private const string StagingTableName = "#migr_staging";
+
+    private enum SourceDialect
+    {
+        SqlServer,
+        MySql,
+    }
 
     public async Task<MigrationExecutionSummary> ExecuteAsync(
         MigrationPlan plan,
@@ -23,44 +31,68 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             return MigrationExecutionSummary.FromValidation(validation);
         }
 
-        var sourceCs = SqlServerConnectionStringFactory.Build(plan.Source);
         var targetCs = SqlServerConnectionStringFactory.Build(plan.Target);
-
-        await using var sourceCtx = new SessionDbContext(SessionDbContextFactory.CreateOptions(sourceCs));
         await using var targetCtx = new SessionDbContext(SessionDbContextFactory.CreateOptions(targetCs));
-
-        await sourceCtx.Database.OpenConnectionAsync(cancellationToken);
         await targetCtx.Database.OpenConnectionAsync(cancellationToken);
-
-        var sourceSql = (SqlConnection)sourceCtx.Database.GetDbConnection();
         var targetSql = (SqlConnection)targetCtx.Database.GetDbConnection();
 
+        var dialect = plan.UsesMySqlSource() ? SourceDialect.MySql : SourceDialect.SqlServer;
         var results = new List<TableMigrationResult>();
         var overallSuccess = true;
 
-        foreach (var table in plan.Tables)
+        if (plan.UsesMySqlSource())
         {
-            TableMigrationResult row;
-            try
-            {
-                row = await ProcessTableAsync(
-                    sourceSql,
-                    targetSql,
-                    table,
-                    options,
-                    cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                overallSuccess = false;
-                row = new TableMigrationResult(table.Source, table.Target, 0, 0, ex.Message);
-            }
+            var mysqlCs = MySqlConnectionStringFactory.Build(plan.MySqlSource!);
+            await using var mysql = new MySqlConnection(mysqlCs);
+            await mysql.OpenAsync(cancellationToken);
 
-            results.Add(row);
-            if (row.Error is not null)
+            foreach (var table in plan.Tables)
             {
-                overallSuccess = false;
-                break;
+                TableMigrationResult row;
+                try
+                {
+                    row = await ProcessTableAsync(mysql, dialect, targetSql, table, options, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    overallSuccess = false;
+                    row = new TableMigrationResult(table.Source, table.Target, 0, 0, ex.Message);
+                }
+
+                results.Add(row);
+                if (row.Error is not null)
+                {
+                    overallSuccess = false;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            var sourceCs = SqlServerConnectionStringFactory.Build(plan.Source);
+            await using var sourceCtx = new SessionDbContext(SessionDbContextFactory.CreateOptions(sourceCs));
+            await sourceCtx.Database.OpenConnectionAsync(cancellationToken);
+            var sourceSql = (SqlConnection)sourceCtx.Database.GetDbConnection();
+
+            foreach (var table in plan.Tables)
+            {
+                TableMigrationResult row;
+                try
+                {
+                    row = await ProcessTableAsync(sourceSql, dialect, targetSql, table, options, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    overallSuccess = false;
+                    row = new TableMigrationResult(table.Source, table.Target, 0, 0, ex.Message);
+                }
+
+                results.Add(row);
+                if (row.Error is not null)
+                {
+                    overallSuccess = false;
+                    break;
+                }
             }
         }
 
@@ -68,16 +100,19 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
     }
 
     private static async Task<TableMigrationResult> ProcessTableAsync(
-        SqlConnection sourceConn,
+        DbConnection sourceConn,
+        SourceDialect sourceDialect,
         SqlConnection targetConn,
         TableMapping table,
         MigrationExecutionOptions options,
         CancellationToken cancellationToken)
     {
-        var sourceQualified = SqlIdentifier.Qualify(table.Source);
+        var sourceQualified = sourceDialect == SourceDialect.MySql
+            ? MySqlIdentifier.Qualify(table.Source)
+            : SqlIdentifier.Qualify(table.Source);
         var targetQualified = SqlIdentifier.Qualify(table.Target);
 
-        var rowsRead = await CountRowsAsync(sourceConn, sourceQualified, cancellationToken);
+        var rowsRead = await CountRowsAsync(sourceConn, sourceDialect, sourceQualified, cancellationToken);
 
         if (options.DryRun)
         {
@@ -102,6 +137,7 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             {
                 await UpsertAsync(
                     sourceConn,
+                    sourceDialect,
                     targetConn,
                     tx,
                     table,
@@ -113,6 +149,7 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             {
                 await BulkInsertAsync(
                     sourceConn,
+                    sourceDialect,
                     targetConn,
                     tx,
                     table,
@@ -132,12 +169,16 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
     }
 
     private static async Task<long> CountRowsAsync(
-        SqlConnection sourceConn,
+        DbConnection sourceConn,
+        SourceDialect sourceDialect,
         string sourceQualified,
         CancellationToken cancellationToken)
     {
-        var sql = $"SELECT COUNT_BIG(1) FROM {sourceQualified} AS s;";
-        await using var cmd = new SqlCommand(sql, sourceConn) { CommandTimeout = 0 };
+        var countExpr = sourceDialect == SourceDialect.MySql ? "COUNT(*)" : "COUNT_BIG(1)";
+        var sql = $"SELECT {countExpr} FROM {sourceQualified} AS s;";
+        await using var cmd = sourceConn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.CommandTimeout = 0;
         var scalar = await cmd.ExecuteScalarAsync(cancellationToken);
         return Convert.ToInt64(scalar, CultureInfo.InvariantCulture);
     }
@@ -193,7 +234,6 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             }
         }
 
-        // DBCC CHECKIDENT no acepta nombre de objeto como parámetro directamente: usamos SQL dinámico con literal.
         var qualified = $"{schema}.{table}";
         var sql = """
             DECLARE @q sysname = @qualified;
@@ -214,7 +254,8 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
     }
 
     private static async Task BulkInsertAsync(
-        SqlConnection sourceConn,
+        DbConnection sourceConn,
+        SourceDialect sourceDialect,
         SqlConnection targetConn,
         SqlTransaction tx,
         TableMapping table,
@@ -222,9 +263,8 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         string targetQualified,
         CancellationToken cancellationToken)
     {
-        var selectSql = BuildSelectSql(table, sourceQualified);
-        await using var cmd = new SqlCommand(selectSql, sourceConn) { CommandTimeout = 0 };
-        await using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken);
+        var selectSql = BuildSelectSql(table, sourceQualified, sourceDialect);
+        await using var reader = await ExecuteSourceReaderAsync(sourceConn, selectSql, cancellationToken);
 
         using var bulk = new SqlBulkCopy(targetConn, SqlBulkCopyOptions.TableLock, tx)
         {
@@ -242,12 +282,20 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         await bulk.WriteToServerAsync(reader, cancellationToken);
     }
 
-    /// <summary>
-    /// SqlBulkCopy espera el nombre de tabla sin corchetes en la mayoría de casos; para esquema.tabla usa [dbo].[T] como "dbo.T" puede fallar — usamos tres partes? Actually DestinationTableName for dbo.Table is "dbo.Table" string without brackets per MS docs.
-    /// </summary>
+    private static async Task<DbDataReader> ExecuteSourceReaderAsync(
+        DbConnection sourceConn,
+        string sql,
+        CancellationToken cancellationToken)
+    {
+        var cmd = sourceConn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.CommandTimeout = 0;
+        return await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     private static string StripBracketsForBulkCopy(string bracketedQualified)
     {
-        // Convierte [dbo].[Cliente] -> dbo.Cliente
         var parts = bracketedQualified.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length != 2)
         {
@@ -260,7 +308,8 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
     private static string Unbracket(string part) => part.Trim().TrimStart('[').TrimEnd(']').Replace("]]", "]", StringComparison.Ordinal);
 
     private static async Task UpsertAsync(
-        SqlConnection sourceConn,
+        DbConnection sourceConn,
+        SourceDialect sourceDialect,
         SqlConnection targetConn,
         SqlTransaction tx,
         TableMapping table,
@@ -287,9 +336,8 @@ FROM {targetQualified};";
             await create.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        var selectSql = BuildSelectSql(table, sourceQualified);
-        await using (var cmd = new SqlCommand(selectSql, sourceConn) { CommandTimeout = 0 })
-        await using (var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken))
+        var selectSql = BuildSelectSql(table, sourceQualified, sourceDialect);
+        await using (var reader = await ExecuteSourceReaderAsync(sourceConn, selectSql, cancellationToken))
         {
             using var bulk = new SqlBulkCopy(targetConn, SqlBulkCopyOptions.TableLock, tx)
             {
@@ -327,7 +375,7 @@ FROM {targetQualified};";
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static string BuildSelectSql(TableMapping table, string sourceQualified)
+    private static string BuildSelectSql(TableMapping table, string sourceQualified, SourceDialect sourceDialect)
     {
         var sb = new StringBuilder();
         sb.Append("SELECT ");
@@ -340,16 +388,20 @@ FROM {targetQualified};";
 
             var col = table.Columns[i];
             var tgt = ResolveTargetColumn(col);
-            var fragment = GetSourceSelectFragment(col);
-            sb.Append(fragment)
-                .Append(" AS ").Append(SqlIdentifier.Bracket(tgt));
+            var fragment = GetSourceSelectFragment(col, sourceDialect);
+            sb.Append(fragment).Append(" AS ").Append(FormatSelectAlias(tgt, sourceDialect));
         }
 
         sb.Append(" FROM ").Append(sourceQualified).Append(" AS s;");
         return sb.ToString();
     }
 
-    private static string GetSourceSelectFragment(ColumnMapping col)
+    private static string FormatSelectAlias(string columnName, SourceDialect sourceDialect) =>
+        sourceDialect == SourceDialect.MySql
+            ? MySqlIdentifier.Backtick(columnName)
+            : SqlIdentifier.Bracket(columnName);
+
+    private static string GetSourceSelectFragment(ColumnMapping col, SourceDialect sourceDialect)
     {
         if (!string.IsNullOrWhiteSpace(col.SourceExpression))
         {
@@ -362,7 +414,10 @@ FROM {targetQualified};";
             return col.SourceExpression.Trim();
         }
 
-        return $"s.{SqlIdentifier.Bracket(col.Source.Trim())}";
+        var src = col.Source.Trim();
+        return sourceDialect == SourceDialect.MySql
+            ? $"s.{MySqlIdentifier.Backtick(src)}"
+            : $"s.{SqlIdentifier.Bracket(src)}";
     }
 
     private static string BuildMergeSql(TableMapping table, string targetQualified, IReadOnlyList<string> targetKeys)

@@ -128,6 +128,45 @@ app.MapPost("/api/migration/metadata/columns", async (
     })
     .WithName("MetadataColumns");
 
+app.MapPost("/api/migration/mysql/metadata/tables", async (
+        MysqlMetadataTablesRequest request,
+        CancellationToken cancellationToken) =>
+    {
+        try
+        {
+            var cs = MySqlConnectionStringFactory.Build(request.Connection);
+            var tables = await MySqlSchemaMetadataReader.GetTablesAsync(cs, cancellationToken);
+            return Results.Json(new MetadataTablesResponse(tables));
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+    })
+    .WithName("MysqlMetadataTables");
+
+app.MapPost("/api/migration/mysql/metadata/columns", async (
+        MysqlMetadataColumnsRequest request,
+        CancellationToken cancellationToken) =>
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request.Table))
+            {
+                return Results.BadRequest(new { error = "Indique el nombre calificado de la tabla (p. ej. esquema.tabla)." });
+            }
+
+            var cs = MySqlConnectionStringFactory.Build(request.Connection);
+            var columns = await MySqlSchemaMetadataReader.GetColumnsAsync(cs, request.Table.Trim(), cancellationToken);
+            return Results.Json(new MetadataColumnsResponse(columns));
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+    })
+    .WithName("MysqlMetadataColumns");
+
 app.Run();
 
 internal sealed record MigrationPlanValidationResponse(bool IsValid, IReadOnlyList<string> Errors);

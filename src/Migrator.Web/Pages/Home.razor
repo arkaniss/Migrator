@@ -5,12 +5,12 @@
 <h1>Migrator</h1>
 
 <p>
-    Herramienta para definir <strong>mapeos tabla/columna</strong> entre dos bases SQL Server y exportar un JSON
+    Herramienta para definir <strong>mapeos tabla/columna</strong> hacia SQL Server (origen SQL Server o MySQL) y exportar un JSON
     reutilizable por un motor de migración (por ejemplo una consola .NET o una API).
 </p>
 
 <p>
-    La interfaz visual está en <a href="mapeo">Mapeo</a> (servidor, base de datos y carga de tablas/columnas vía API).
+    La interfaz visual: <a href="mapeo">SQL Server → SQL Server</a> y <a href="mysql">MySQL → SQL Server</a> (conexiones, carga de tablas/columnas vía API).
     Arranca <strong>Migrator.Api</strong> (<code>dotnet run --project src/Migrator.Api</code>): validación, metadatos, ejecución
     (<code>POST /api/migration/execute</code>) y prueba sin escribir con <code>?dryRun=true</code>.
     La URL del API en el WASM está en <code>wwwroot/appsettings.json</code> → <code>MigratorApi</code>.
