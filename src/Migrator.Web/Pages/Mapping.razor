@@ -179,83 +179,89 @@
     </div>
 </div>
 
-<div class="row mb-2">
-    <div class="col-12 d-flex justify-content-between align-items-start flex-wrap gap-2">
-        <div>
-            <h3 class="h6 mb-0">Mapeo de columnas</h3>
-            <p class="small text-muted mb-0">
-                La tabla origen usa el alias <code>s</code>. Sin transformación se usa <code>s.[columna]</code>.
-                También <code>TRY_CONVERT</code>, <code>COALESCE</code>, <code>NULLIF</code>, <code>FORMAT</code>, etc.
-            </p>
-        </div>
-        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AddColumnRow">+ Fila</button>
-    </div>
-</div>
-<div class="row small fw-semibold text-muted mb-1 d-none d-md-flex gx-2">
-    <div class="col-md-3">Campo origen</div>
-    <div class="col-md-4">Transformación SQL</div>
-    <div class="col-md-3">Campo destino</div>
-    <div class="col-md-2"></div>
-</div>
-
-@for (var i = 0; i < columnRows.Count; i++)
-{
-    var index = i;
-    <div class="row g-2 mb-3 border-bottom pb-3 align-items-start">
-        <div class="col-12 col-md-3">
-            <label class="form-label small mb-0">Campo origen</label>
-            @if (sourceColumns.Count > 0)
-            {
-                <InputSelect class="form-select form-select-sm" @bind-Value="columnRows[index].Source">
-                    <option value="">—</option>
-                    @foreach (var c in sourceColumns)
-                    {
-                        <option value="@c.Name">@c.Name (@c.DataType)</option>
-                    }
-                </InputSelect>
-            }
-            else
-            {
-                <InputText class="form-control form-control-sm" placeholder="IdCliente" @bind-Value="columnRows[index].Source" />
-            }
-        </div>
-        <div class="col-12 col-md-4">
-            <label class="form-label small mb-0">Transformación (opcional)</label>
-            <InputTextArea class="form-control form-control-sm font-monospace" rows="1"
-                           @bind-Value="columnRows[index].SourceExpression"
-                           placeholder="Ej: ISNULL(s.[Fecha], '1900-01-01')&#10;CONVERT(varchar(23), s.[Fecha], 126)&#10;CASE WHEN s.[Activo]=1 THEN N'Sí' ELSE N'No' END" />
-            <div class="btn-group btn-group-sm mt-1 flex-wrap" role="group">
-                <button type="button" class="btn btn-outline-secondary" title="Plantilla ISNULL" @onclick="() => ApplyIsNullTemplate(index)">ISNULL</button>
-                <button type="button" class="btn btn-outline-secondary" title="CONVERT a varchar" @onclick="() => ApplyConvertVarcharTemplate(index)">CONVERT</button>
-                <button type="button" class="btn btn-outline-secondary" title="CASE WHEN simple" @onclick="() => ApplyCaseTemplate(index)">CASE</button>
-                <button type="button" class="btn btn-outline-secondary" title="COALESCE con segunda columna (edita)" @onclick="() => ApplyCoalesceTemplate(index)">COALESCE</button>
+<div class="card mb-3">
+    <div class="card-body row g-3 mb-3">
+        <div class="row mb-2">
+            <div class="col-12 d-flex justify-content-between align-items-start flex-wrap gap-2">
+                <div>
+                    <h3 class="h6 mt-3 mb-0">Mapeo de columnas</h3>
+                    <p class="small text-muted mb-0">
+                        La tabla origen usa el alias <code>s</code>. Sin transformación se usa <code>s.[columna]</code>.
+                        También <code>TRY_CONVERT</code>, <code>COALESCE</code>, <code>NULLIF</code>, <code>FORMAT</code>, etc.
+                    </p>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AddColumnRow">+ Fila</button>
             </div>
         </div>
-        <div class="col-12 col-md-3">
-            <label class="form-label small mb-0">Campo destino</label>
-            @if (targetColumns.Count > 0)
-            {
-                <InputSelect class="form-select form-select-sm" @bind-Value="columnRows[index].Target">
-                    <option value="">—</option>
-                    @foreach (var c in targetColumns)
+        <div class="row small fw-semibold text-muted mb-1 d-none d-md-flex gx-2 border-bottom">
+            <div class="col-md-3">Campo origen</div>
+            <div class="col-md-4">Transformación SQL</div>
+            <div class="col-md-3">Campo destino</div>
+            <div class="col-md-2"></div>
+        </div>
+
+        @for (var i = 0; i < columnRows.Count; i++)
+        {
+            var index = i;
+            <div class="row g-2 mb-3 border-bottom pb-3 align-items-start div-bottom-separator">
+                <div class="col-12 col-md-3">
+                    <label class="form-label small mb-0">Campo origen</label>
+                    @if (sourceColumns.Count > 0)
                     {
-                        <option value="@c.Name">@c.Name (@c.DataType)</option>
+                        <InputSelect class="form-select form-select-sm" @bind-Value="columnRows[index].Source">
+                            <option value="">—</option>
+                            @foreach (var c in sourceColumns)
+                            {
+                                <option value="@c.Name">@c.Name (@c.DataType)</option>
+                            }
+                        </InputSelect>
                     }
-                </InputSelect>
-            }
-            else
-            {
-                <InputText class="form-control form-control-sm" placeholder="clienteId" @bind-Value="columnRows[index].Target" />
-            }
-        </div>
-        <div class="col-12 col-md-2 d-flex align-items-end">
-            @if (columnRows.Count > 1)
-            {
-                <button type="button" class="btn btn-outline-danger w-100" @onclick="() => RemoveColumnRow(index)">Quitar</button>
-            }
-        </div>
+                    else
+                    {
+                        <InputText class="form-control form-control-sm" placeholder="IdCliente" @bind-Value="columnRows[index].Source" />
+                    }
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label small mb-0">Transformación (opcional)</label>
+                    <InputTextArea class="form-control form-control-sm font-monospace" rows="1"
+                                   @bind-Value="columnRows[index].SourceExpression"
+                                   placeholder="Ej: ISNULL(s.[Fecha], '1900-01-01')&#10;CONVERT(varchar(23), s.[Fecha], 126)&#10;CASE WHEN s.[Activo]=1 THEN N'Sí' ELSE N'No' END" />
+                    <div class="btn-group btn-group-sm mt-1 flex-wrap" role="group">
+                        <button type="button" class="btn btn-outline-secondary" title="Plantilla ISNULL" @onclick="() => ApplyIsNullTemplate(index)">ISNULL</button>
+                        <button type="button" class="btn btn-outline-secondary" title="CONVERT a varchar" @onclick="() => ApplyConvertVarcharTemplate(index)">CONVERT</button>
+                        <button type="button" class="btn btn-outline-secondary" title="CASE WHEN simple" @onclick="() => ApplyCaseTemplate(index)">CASE</button>
+                        <button type="button" class="btn btn-outline-secondary" title="COALESCE con segunda columna (edita)" @onclick="() => ApplyCoalesceTemplate(index)">COALESCE</button>
+                    </div>
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label small mb-0">Campo destino</label>
+                    @if (targetColumns.Count > 0)
+                    {
+                        <InputSelect class="form-select form-select-sm" @bind-Value="columnRows[index].Target">
+                            <option value="">—</option>
+                            @foreach (var c in targetColumns)
+                            {
+                                <option value="@c.Name">@c.Name (@c.DataType)</option>
+                            }
+                        </InputSelect>
+                    }
+                    else
+                    {
+                        <InputText class="form-control form-control-sm" placeholder="clienteId" @bind-Value="columnRows[index].Target" />
+                    }
+                </div>
+                <div class="col-12 col-md-2 d-flex align-items-end">
+                    @if (columnRows.Count > 1)
+                    {
+                        <button type="button" class="btn btn-outline-danger w-100" @onclick="() => RemoveColumnRow(index)">Quitar</button>
+                    }
+                </div>
+            </div>
+        }
+
     </div>
-}
+
+</div>
 
 <div class="btn-toolbar gap-2 my-3">
     <button type="button" class="btn btn-primary" @onclick="AddOrUpdateTable">Guardar tabla en el plan</button>
@@ -409,7 +415,7 @@ else
     private string draftKeys = string.Empty;
     private bool draftReseedToZero;
 
-    private readonly List<ColumnRow> columnRows = new() { new(), new() };
+    private readonly List<ColumnRow> columnRows = new() { new() };
 
     private string? statusMessage;
 
