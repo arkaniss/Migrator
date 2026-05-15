@@ -305,7 +305,7 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         var selectSql = BuildSelectSql(table, sourceQualified, sourceDialect);
         await using var reader = await ExecuteSourceReaderAsync(sourceConn, selectSql, cancellationToken);
 
-        using var bulk = new SqlBulkCopy(targetConn, SqlBulkCopyOptions.TableLock, tx)
+        using var bulk = new SqlBulkCopy(targetConn, BulkCopyOptions(table), tx)
         {
             DestinationTableName = StripBracketsForBulkCopy(targetQualified),
             BulkCopyTimeout = 0,
@@ -378,7 +378,7 @@ FROM {targetQualified};";
         var selectSql = BuildSelectSql(table, sourceQualified, sourceDialect);
         await using (var reader = await ExecuteSourceReaderAsync(sourceConn, selectSql, cancellationToken))
         {
-            using var bulk = new SqlBulkCopy(targetConn, SqlBulkCopyOptions.TableLock, tx)
+            using var bulk = new SqlBulkCopy(targetConn, BulkCopyOptions(table), tx)
             {
                 DestinationTableName = StagingTableName,
                 BulkCopyTimeout = 0,
@@ -396,7 +396,41 @@ FROM {targetQualified};";
 
         var mergeSql = BuildMergeSql(table, targetQualified, targetKeys);
         await using var mergeCmd = new SqlCommand(mergeSql, targetConn, tx) { CommandTimeout = 0 };
-        await mergeCmd.ExecuteNonQueryAsync(cancellationToken);
+
+        var identityCol = table.PreserveIdentityValues
+            ? await GetMappedIdentityColumnNameAsync(targetConn, tx, table, cancellationToken)
+            : null;
+
+        if (identityCol is not null)
+        {
+            await using var onIdent = new SqlCommand(
+                $"SET IDENTITY_INSERT {targetQualified} ON;",
+                targetConn,
+                tx)
+            {
+                CommandTimeout = 0,
+            };
+            await onIdent.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        try
+        {
+            await mergeCmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            if (identityCol is not null)
+            {
+                await using var offIdent = new SqlCommand(
+                    $"SET IDENTITY_INSERT {targetQualified} OFF;",
+                    targetConn,
+                    tx)
+                {
+                    CommandTimeout = 0,
+                };
+                await offIdent.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
 
         await DropStagingIfExistsAsync(targetConn, tx, cancellationToken);
     }
@@ -541,4 +575,56 @@ FROM {targetQualified};";
     private static bool IsTruncateReload(string? mode) =>
         !string.IsNullOrWhiteSpace(mode)
         && string.Equals(mode.Trim(), "truncateReload", StringComparison.OrdinalIgnoreCase);
+
+    private static SqlBulkCopyOptions BulkCopyOptions(TableMapping table)
+    {
+        var o = SqlBulkCopyOptions.TableLock;
+        if (table.PreserveIdentityValues)
+        {
+            o |= SqlBulkCopyOptions.KeepIdentity;
+        }
+
+        return o;
+    }
+
+    /// <summary>
+    /// Nombre de columna IDENTITY en destino si existe y está incluida en el mapeo (nombres destino).
+    /// </summary>
+    private static async Task<string?> GetMappedIdentityColumnNameAsync(
+        SqlConnection targetConn,
+        SqlTransaction tx,
+        TableMapping table,
+        CancellationToken cancellationToken)
+    {
+        SqlIdentifier.ParseTable(table.Target, out var schema, out var tableName);
+
+        const string sql = """
+            SELECT c.name
+            FROM sys.identity_columns ic
+            INNER JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+            INNER JOIN sys.tables t ON t.object_id = ic.object_id
+            INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+            WHERE s.name = @schema AND t.name = @table;
+            """;
+
+        string? identityName = null;
+        await using (var cmd = new SqlCommand(sql, targetConn, tx) { CommandTimeout = 60 })
+        {
+            cmd.Parameters.AddWithValue("@schema", schema);
+            cmd.Parameters.AddWithValue("@table", tableName);
+            await using var r = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (await r.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                identityName = r.GetString(0);
+            }
+        }
+
+        if (identityName is null)
+        {
+            return null;
+        }
+
+        var mapped = table.Columns.Select(ResolveTargetColumn).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return mapped.Contains(identityName) ? identityName : null;
+    }
 }

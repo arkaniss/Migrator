@@ -44,6 +44,13 @@ public sealed class TableMapping
     public bool ReseedToZero { get; set; }
 
     /// <summary>
+    /// Si es true, en <c>insert</c>, <c>truncateReload</c> y <c>upsert</c> intenta conservar en el destino los valores
+    /// de la columna IDENTITY que vengan del origen (mapeada en <see cref="Columns"/>): <c>SqlBulkCopy</c> con
+    /// <c>KeepIdentity</c> y, en upsert, <c>SET IDENTITY_INSERT</c> alrededor del <c>MERGE</c> cuando aplica.
+    /// </summary>
+    public bool PreserveIdentityValues { get; set; }
+
+    /// <summary>
     /// En modo <c>upsert</c>, nombres de columna en el <strong>origen</strong> (se resuelven al destino con <see cref="Columns"/>)
     /// o, si no hay mapeo, se interpretan como nombres ya en el destino.
     /// </summary>

@@ -165,7 +165,7 @@
             <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="LoadDraftColumnsAsync" disabled="@(string.IsNullOrWhiteSpace(draftSource) || string.IsNullOrWhiteSpace(draftTarget))">Cargar columnas</button>
             <button type="button" class="btn btn-outline-secondary btn-sm ms-2" @onclick="SuggestByName" disabled="@(sourceColumns.Count == 0 || targetColumns.Count == 0)">Sugerir mapeo por nombre</button>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <label class="form-label">Modo</label>
             <InputSelect class="form-select" @bind-Value="draftMode">
                 <option value="insert">insert</option>
@@ -173,14 +173,20 @@
                 <option value="truncateReload">truncateReload</option>
             </InputSelect>
         </div>
-        <div class="col-md-5">
+        <div class="col-md-4">
             <label class="form-label">Columnas clave (coma; nombres en <strong>origen</strong>, modo upsert)</label>
             <InputText class="form-control" @bind-Value="draftKeys" placeholder="IdCliente, codigo" />
         </div>
-        <div class="col-md-3 d-flex align-items-end">
-            <div class="form-check">
-                <InputCheckbox class="form-check-input" id="reseed0" @bind-Value="draftReseedToZero" />
-                <label class="form-check-label" for="reseed0">Reseed identidad a 1 (destino)</label>
+        <div class="col-md-5 d-flex align-items-end">
+            <div class="d-flex flex-column gap-2 w-100">
+                <div class="form-check mb-0">
+                    <InputCheckbox class="form-check-input" id="reseed0" @bind-Value="draftReseedToZero" />
+                    <label class="form-check-label" for="reseed0">Reseed identidad a 1 (destino)</label>
+                </div>
+                <div class="form-check mb-0">
+                    <InputCheckbox class="form-check-input" id="preserveIdentity" @bind-Value="draftPreserveIdentityValues" />
+                    <label class="form-check-label" for="preserveIdentity">Mantener valores IDENTITY (insert / truncateReload / upsert)</label>
+                </div>
             </div>
         </div>
     </div>
@@ -303,7 +309,7 @@ else
                         <span class="text-muted">→</span>
                         <strong>@t.Target</strong>
                         <span class="badge bg-secondary ms-2">@t.Mode</span>
-                        <div class="small text-muted">@t.Columns.Count columnas · @(t.Columns.Count(c => !string.IsNullOrWhiteSpace(c.SourceExpression))) con transformación SQL · claves: @(t.KeyColumns.Count == 0 ? "—" : string.Join(", ", t.KeyColumns))</div>
+                        <div class="small text-muted">@t.Columns.Count columnas · @(t.Columns.Count(c => !string.IsNullOrWhiteSpace(c.SourceExpression))) con transformación SQL · claves: @(t.KeyColumns.Count == 0 ? "—" : string.Join(", ", t.KeyColumns))@(IdentityOptionsSuffix(t))</div>
                         @if (lastRunBySource.TryGetValue(t.Source, out var st))
                         {
                             <div class="small @(st.Success ? "text-success" : "text-danger")">
@@ -473,6 +479,7 @@ else
     private string draftMode = "insert";
     private string draftKeys = string.Empty;
     private bool draftReseedToZero;
+    private bool draftPreserveIdentityValues;
 
     private readonly List<ColumnRow> columnRows = new() { new() };
 
@@ -1046,6 +1053,7 @@ else
                 Target = t.Target,
                 Mode = t.Mode,
                 ReseedToZero = t.ReseedToZero,
+                PreserveIdentityValues = t.PreserveIdentityValues,
                 KeyColumns = t.KeyColumns.ToList(),
                 Columns = t.Columns.Select(c => new ColumnMapping
                 {
@@ -1454,6 +1462,7 @@ else
             Target = draftTarget.Trim(),
             Mode = draftMode,
             ReseedToZero = draftReseedToZero,
+            PreserveIdentityValues = draftPreserveIdentityValues,
             KeyColumns = keys,
             Columns = cols,
         };
@@ -1482,6 +1491,7 @@ else
         draftMode = "insert";
         draftKeys = string.Empty;
         draftReseedToZero = false;
+        draftPreserveIdentityValues = false;
         columnRows.Clear();
         columnRows.Add(new());
         columnRows.Add(new());
@@ -1556,6 +1566,27 @@ else
         await PersistSavedConnectionsAsync();
 
         statusMessage = $"Importado: {plan.Tables.Count} tabla(s). Conexiones añadidas/actualizadas en la biblioteca. Marca cuáles ejecutar y usa dry-run antes del real.";
+    }
+
+    private static string IdentityOptionsSuffix(TableMapping t)
+    {
+        if (!t.ReseedToZero && !t.PreserveIdentityValues)
+        {
+            return string.Empty;
+        }
+
+        var parts = new List<string>(2);
+        if (t.ReseedToZero)
+        {
+            parts.Add("reseed identidad");
+        }
+
+        if (t.PreserveIdentityValues)
+        {
+            parts.Add("mantener IDENTITY");
+        }
+
+        return " · " + string.Join(", ", parts);
     }
 
     private sealed class ColumnRow
