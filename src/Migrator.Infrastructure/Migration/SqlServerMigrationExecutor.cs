@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Migrator.Core;
 using Migrator.Infrastructure.Data;
 using MySqlConnector;
+using Oracle.ManagedDataAccess.Client;
 
 namespace Migrator.Infrastructure.Migration;
 
@@ -18,6 +19,7 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
     {
         SqlServer,
         MySql,
+        Oracle,
     }
 
     public async Task<MigrationExecutionSummary> ExecuteAsync(
@@ -36,11 +38,42 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         await targetCtx.Database.OpenConnectionAsync(cancellationToken);
         var targetSql = (SqlConnection)targetCtx.Database.GetDbConnection();
 
-        var dialect = plan.UsesMySqlSource() ? SourceDialect.MySql : SourceDialect.SqlServer;
+        var dialect = plan.UsesOracleSource()
+            ? SourceDialect.Oracle
+            : plan.UsesMySqlSource()
+                ? SourceDialect.MySql
+                : SourceDialect.SqlServer;
         var results = new List<TableMigrationResult>();
         var overallSuccess = true;
 
-        if (plan.UsesMySqlSource())
+        if (plan.UsesOracleSource())
+        {
+            var oracleCs = OracleConnectionStringFactory.Build(plan.OracleSource!);
+            await using var oracle = new OracleConnection(oracleCs);
+            await oracle.OpenAsync(cancellationToken);
+
+            foreach (var table in plan.Tables)
+            {
+                TableMigrationResult row;
+                try
+                {
+                    row = await ProcessTableAsync(oracle, dialect, targetSql, table, options, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    overallSuccess = false;
+                    row = new TableMigrationResult(table.Source, table.Target, 0, 0, ex.Message);
+                }
+
+                results.Add(row);
+                if (row.Error is not null)
+                {
+                    overallSuccess = false;
+                    break;
+                }
+            }
+        }
+        else if (plan.UsesMySqlSource())
         {
             var mysqlCs = MySqlConnectionStringFactory.Build(plan.MySqlSource!);
             await using var mysql = new MySqlConnection(mysqlCs);
@@ -107,9 +140,12 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         MigrationExecutionOptions options,
         CancellationToken cancellationToken)
     {
-        var sourceQualified = sourceDialect == SourceDialect.MySql
-            ? MySqlIdentifier.Qualify(table.Source)
-            : SqlIdentifier.Qualify(table.Source);
+        var sourceQualified = sourceDialect switch
+        {
+            SourceDialect.MySql => MySqlIdentifier.Qualify(table.Source),
+            SourceDialect.Oracle => OracleIdentifier.Qualify(table.Source),
+            _ => SqlIdentifier.Qualify(table.Source),
+        };
         var targetQualified = SqlIdentifier.Qualify(table.Target);
 
         var rowsRead = await CountRowsAsync(sourceConn, sourceDialect, sourceQualified, cancellationToken);
@@ -174,8 +210,11 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         string sourceQualified,
         CancellationToken cancellationToken)
     {
-        var countExpr = sourceDialect == SourceDialect.MySql ? "COUNT(*)" : "COUNT_BIG(1)";
-        var sql = $"SELECT {countExpr} FROM {sourceQualified} AS s;";
+        var countExpr = sourceDialect is SourceDialect.MySql or SourceDialect.Oracle ? "COUNT(*)" : "COUNT_BIG(1)";
+        var fromAndAlias = sourceDialect == SourceDialect.Oracle
+            ? $" FROM {sourceQualified} s"
+            : $" FROM {sourceQualified} AS s";
+        var sql = $"SELECT {countExpr}{fromAndAlias}";
         await using var cmd = sourceConn.CreateCommand();
         cmd.CommandText = sql;
         cmd.CommandTimeout = 0;
@@ -392,14 +431,18 @@ FROM {targetQualified};";
             sb.Append(fragment).Append(" AS ").Append(FormatSelectAlias(tgt, sourceDialect));
         }
 
-        sb.Append(" FROM ").Append(sourceQualified).Append(" AS s;");
+        sb.Append(" FROM ").Append(sourceQualified);
+        sb.Append(sourceDialect == SourceDialect.Oracle ? " s" : " AS s");
         return sb.ToString();
     }
 
     private static string FormatSelectAlias(string columnName, SourceDialect sourceDialect) =>
-        sourceDialect == SourceDialect.MySql
-            ? MySqlIdentifier.Backtick(columnName)
-            : SqlIdentifier.Bracket(columnName);
+        sourceDialect switch
+        {
+            SourceDialect.MySql => MySqlIdentifier.Backtick(columnName),
+            SourceDialect.Oracle => OracleIdentifier.Quote(columnName),
+            _ => SqlIdentifier.Bracket(columnName),
+        };
 
     private static string GetSourceSelectFragment(ColumnMapping col, SourceDialect sourceDialect)
     {
@@ -415,9 +458,12 @@ FROM {targetQualified};";
         }
 
         var src = col.Source.Trim();
-        return sourceDialect == SourceDialect.MySql
-            ? $"s.{MySqlIdentifier.Backtick(src)}"
-            : $"s.{SqlIdentifier.Bracket(src)}";
+        return sourceDialect switch
+        {
+            SourceDialect.MySql => $"s.{MySqlIdentifier.Backtick(src)}",
+            SourceDialect.Oracle => $"s.{OracleIdentifier.Quote(src)}",
+            _ => $"s.{SqlIdentifier.Bracket(src)}",
+        };
     }
 
     private static string BuildMergeSql(TableMapping table, string targetQualified, IReadOnlyList<string> targetKeys)

@@ -423,20 +423,42 @@ else
         string.Equals(x.Kind, "mySql", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsSqlServerSaved(SavedConnectionEntry x) =>
-        !string.Equals(x.Kind, "mySql", StringComparison.OrdinalIgnoreCase);
+        string.Equals(x.Kind, "sqlServer", StringComparison.OrdinalIgnoreCase);
 
     private static string SavedConnectionKindLabel(SavedConnectionEntry s) =>
-        string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) ? "MySQL" : "SQL Server";
+        string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) ? "MySQL"
+        : string.Equals(s.Kind, "oracle", StringComparison.OrdinalIgnoreCase) ? "Oracle"
+        : "SQL Server";
 
-    private static string SavedConnectionServer(SavedConnectionEntry s) =>
-        string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && s.MySql is not null
-            ? $"{s.MySql.Server}:{s.MySql.Port}"
-            : s.Connection?.Server ?? "—";
+    private static string SavedConnectionServer(SavedConnectionEntry s)
+    {
+        if (string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && s.MySql is not null)
+        {
+            return $"{s.MySql.Server}:{s.MySql.Port}";
+        }
 
-    private static string SavedConnectionDatabase(SavedConnectionEntry s) =>
-        string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && s.MySql is not null
-            ? s.MySql.Database
-            : s.Connection?.Database ?? "—";
+        if (string.Equals(s.Kind, "oracle", StringComparison.OrdinalIgnoreCase) && s.Oracle is not null)
+        {
+            return $"{s.Oracle.Server}:{s.Oracle.Port}";
+        }
+
+        return s.Connection?.Server ?? "—";
+    }
+
+    private static string SavedConnectionDatabase(SavedConnectionEntry s)
+    {
+        if (string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && s.MySql is not null)
+        {
+            return s.MySql.Database;
+        }
+
+        if (string.Equals(s.Kind, "oracle", StringComparison.OrdinalIgnoreCase) && s.Oracle is not null)
+        {
+            return s.Oracle.ServiceName;
+        }
+
+        return s.Connection?.Database ?? "—";
+    }
 
     private List<SchemaTableDto> sourceTables = new();
     private List<SchemaTableDto> targetTables = new();
@@ -550,7 +572,13 @@ else
                 continue;
             }
 
-            c.Kind = c.MySql is not null && !string.IsNullOrWhiteSpace(c.MySql.Server) ? "mySql" : "sqlServer";
+            c.Kind = c.Oracle is not null
+                     && !string.IsNullOrWhiteSpace(c.Oracle.Server)
+                     && !string.IsNullOrWhiteSpace(c.Oracle.ServiceName)
+                ? "oracle"
+                : c.MySql is not null && !string.IsNullOrWhiteSpace(c.MySql.Server)
+                    ? "mySql"
+                    : "sqlServer";
         }
     }
 
@@ -571,6 +599,7 @@ else
             existing.Kind = "sqlServer";
             existing.Connection = CloneConn(info);
             existing.MySql = null;
+            existing.Oracle = null;
             existing.LastUsedAt = DateTimeOffset.UtcNow;
             if (!string.IsNullOrWhiteSpace(preferredName))
             {
@@ -590,6 +619,7 @@ else
             Name = name,
             Connection = CloneConn(info),
             MySql = null,
+            Oracle = null,
             LastUsedAt = DateTimeOffset.UtcNow,
         });
     }
@@ -599,6 +629,11 @@ else
         if (string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && s.MySql is not null)
         {
             return $"{s.Name} ({s.MySql.Server}:{s.MySql.Port} · {s.MySql.Database})";
+        }
+
+        if (string.Equals(s.Kind, "oracle", StringComparison.OrdinalIgnoreCase) && s.Oracle is not null)
+        {
+            return $"{s.Name} ({s.Oracle.Server}:{s.Oracle.Port} · {s.Oracle.ServiceName})";
         }
 
         if (s.Connection is not null)
@@ -627,6 +662,7 @@ else
             existing.Kind = "mySql";
             existing.MySql = CloneMySql(info);
             existing.Connection = null;
+            existing.Oracle = null;
             existing.LastUsedAt = DateTimeOffset.UtcNow;
             if (!string.IsNullOrWhiteSpace(preferredName))
             {
@@ -646,6 +682,7 @@ else
             Name = name,
             Connection = null,
             MySql = CloneMySql(info),
+            Oracle = null,
             LastUsedAt = DateTimeOffset.UtcNow,
         });
     }
@@ -656,6 +693,64 @@ else
             Server = c.Server,
             Port = c.Port is >= 1 and <= 65535 ? c.Port : 3306,
             Database = c.Database,
+            UserId = c.UserId,
+            Password = c.Password,
+        };
+
+    private static bool IsOracleSaved(SavedConnectionEntry x) =>
+        string.Equals(x.Kind, "oracle", StringComparison.OrdinalIgnoreCase);
+
+    private void UpsertOracleConnectionFromUsage(OracleConnectionInfo info, string? preferredName = null)
+    {
+        if (string.IsNullOrWhiteSpace(info.Server)
+            || string.IsNullOrWhiteSpace(info.ServiceName)
+            || string.IsNullOrWhiteSpace(info.UserId))
+        {
+            return;
+        }
+
+        var fp = SavedConnectionFingerprint.Of(info);
+        var existing = savedConnections.FirstOrDefault(x =>
+            IsOracleSaved(x)
+            && x.Oracle is not null
+            && SavedConnectionFingerprint.Of(x.Oracle) == fp);
+
+        if (existing is not null)
+        {
+            existing.Kind = "oracle";
+            existing.Oracle = CloneOracle(info);
+            existing.Connection = null;
+            existing.MySql = null;
+            existing.LastUsedAt = DateTimeOffset.UtcNow;
+            if (!string.IsNullOrWhiteSpace(preferredName))
+            {
+                existing.Name = preferredName.Trim();
+            }
+
+            return;
+        }
+
+        var name = !string.IsNullOrWhiteSpace(preferredName)
+            ? preferredName!.Trim()
+            : $"{info.Server.Trim()}:{info.Port} · {info.ServiceName.Trim()}";
+
+        savedConnections.Add(new SavedConnectionEntry
+        {
+            Kind = "oracle",
+            Name = name,
+            Connection = null,
+            MySql = null,
+            Oracle = CloneOracle(info),
+            LastUsedAt = DateTimeOffset.UtcNow,
+        });
+    }
+
+    private static OracleConnectionInfo CloneOracle(OracleConnectionInfo c) =>
+        new()
+        {
+            Server = c.Server,
+            Port = c.Port is >= 1 and <= 65535 ? c.Port : 1521,
+            ServiceName = c.ServiceName,
             UserId = c.UserId,
             Password = c.Password,
         };
@@ -799,6 +894,10 @@ else
                 {
                     UpsertMySqlConnectionFromUsage(row.MySql, string.IsNullOrWhiteSpace(row.Name) ? null : row.Name.Trim());
                 }
+                else if (string.Equals(row.Kind, "oracle", StringComparison.OrdinalIgnoreCase) && row.Oracle is not null)
+                {
+                    UpsertOracleConnectionFromUsage(row.Oracle, string.IsNullOrWhiteSpace(row.Name) ? null : row.Name.Trim());
+                }
                 else if (row.Connection is not null)
                 {
                     row.Kind = "sqlServer";
@@ -819,7 +918,13 @@ else
     {
         if (string.IsNullOrWhiteSpace(row.Kind))
         {
-            row.Kind = row.MySql is not null && !string.IsNullOrWhiteSpace(row.MySql.Server) ? "mySql" : "sqlServer";
+            row.Kind = row.Oracle is not null
+                     && !string.IsNullOrWhiteSpace(row.Oracle.Server)
+                     && !string.IsNullOrWhiteSpace(row.Oracle.ServiceName)
+                ? "oracle"
+                : row.MySql is not null && !string.IsNullOrWhiteSpace(row.MySql.Server)
+                    ? "mySql"
+                    : "sqlServer";
         }
     }
 
@@ -1417,9 +1522,15 @@ else
         var json = await reader.ReadToEndAsync();
         var imported = MigrationPlanJson.Deserialize(json);
 
+        if (imported.UsesOracleSource())
+        {
+            statusMessage = "Este archivo es de migración Oracle → SQL Server. Ábrelo desde el menú Oracle.";
+            return;
+        }
+
         if (!imported.UsesMySqlSource())
         {
-            statusMessage = "Este archivo es de migración solo SQL Server. Importa desde la página SQL Server.";
+            statusMessage = "Este archivo es de migración solo SQL Server → SQL Server. Ábrelo desde el menú SQL Server.";
             return;
         }
 

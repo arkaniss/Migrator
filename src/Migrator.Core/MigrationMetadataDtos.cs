@@ -28,3 +28,7 @@ public sealed record MetadataColumnsRequest(SqlServerConnectionInfo Connection, 
 public sealed record MysqlMetadataTablesRequest(MySqlConnectionInfo Connection);
 
 public sealed record MysqlMetadataColumnsRequest(MySqlConnectionInfo Connection, string Table);
+
+public sealed record OracleMetadataTablesRequest(OracleConnectionInfo Connection);
+
+public sealed record OracleMetadataColumnsRequest(OracleConnectionInfo Connection, string Table);

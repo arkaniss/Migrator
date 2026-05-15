@@ -167,6 +167,45 @@ app.MapPost("/api/migration/mysql/metadata/columns", async (
     })
     .WithName("MysqlMetadataColumns");
 
+app.MapPost("/api/migration/oracle/metadata/tables", async (
+        OracleMetadataTablesRequest request,
+        CancellationToken cancellationToken) =>
+    {
+        try
+        {
+            var cs = OracleConnectionStringFactory.Build(request.Connection);
+            var tables = await OracleSchemaMetadataReader.GetTablesAsync(cs, cancellationToken);
+            return Results.Json(new MetadataTablesResponse(tables));
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+    })
+    .WithName("OracleMetadataTables");
+
+app.MapPost("/api/migration/oracle/metadata/columns", async (
+        OracleMetadataColumnsRequest request,
+        CancellationToken cancellationToken) =>
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request.Table))
+            {
+                return Results.BadRequest(new { error = "Indique el nombre calificado de la tabla (p. ej. esquema.tabla)." });
+            }
+
+            var cs = OracleConnectionStringFactory.Build(request.Connection);
+            var columns = await OracleSchemaMetadataReader.GetColumnsAsync(cs, request.Table.Trim(), cancellationToken);
+            return Results.Json(new MetadataColumnsResponse(columns));
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+    })
+    .WithName("OracleMetadataColumns");
+
 app.Run();
 
 internal sealed record MigrationPlanValidationResponse(bool IsValid, IReadOnlyList<string> Errors);

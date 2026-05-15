@@ -37,6 +37,19 @@
         "userId": "root",
         "password": ""
       }
+    },
+    {
+      "id": "ejemplo04",
+      "name": "Oracle XE · PDB",
+      "lastUsedAt": "2026-05-12T12:00:00+00:00",
+      "kind": "oracle",
+      "oracle": {
+        "server": "127.0.0.1",
+        "port": 1521,
+        "serviceName": "XEPDB1",
+        "userId": "HR",
+        "password": ""
+      }
     }
   ]
 }

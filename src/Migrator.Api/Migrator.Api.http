@@ -129,4 +129,33 @@ Content-Type: application/json
   ]
 }
 
+### Metadatos Oracle: tablas
+POST {{Migrator.Api_HostAddress}}/api/migration/oracle/metadata/tables
+Content-Type: application/json
+
+{
+  "connection": {
+    "server": "localhost",
+    "port": 1521,
+    "serviceName": "XEPDB1",
+    "userId": "HR",
+    "password": "hr"
+  }
+}
+
+### Metadatos Oracle: columnas
+POST {{Migrator.Api_HostAddress}}/api/migration/oracle/metadata/columns
+Content-Type: application/json
+
+{
+  "connection": {
+    "server": "localhost",
+    "port": 1521,
+    "serviceName": "XEPDB1",
+    "userId": "HR",
+    "password": "hr"
+  },
+  "table": "HR.EMPLOYEES"
+}
+
 ###

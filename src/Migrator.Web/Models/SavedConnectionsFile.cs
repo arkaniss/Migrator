@@ -21,7 +21,7 @@ public sealed class SavedConnectionEntry
 
     public DateTimeOffset LastUsedAt { get; set; } = DateTimeOffset.UtcNow;
 
-    /// <summary><c>sqlServer</c> o <c>mySql</c>.</summary>
+    /// <summary><c>sqlServer</c>, <c>mySql</c> u <c>oracle</c>.</summary>
     public string Kind { get; set; } = "sqlServer";
 
     /// <summary>Conexión SQL Server cuando <see cref="Kind"/> es <c>sqlServer</c> (nombre JSON histórico: connection).</summary>
@@ -30,6 +30,9 @@ public sealed class SavedConnectionEntry
 
     /// <summary>Conexión MySQL cuando <see cref="Kind"/> es <c>mySql</c>.</summary>
     public MySqlConnectionInfo? MySql { get; set; }
+
+    /// <summary>Conexión Oracle cuando <see cref="Kind"/> es <c>oracle</c>.</summary>
+    public OracleConnectionInfo? Oracle { get; set; }
 }
 
 public static class SavedConnectionFingerprint
@@ -50,5 +53,14 @@ public static class SavedConnectionFingerprint
         var db = (c.Database ?? string.Empty).Trim().ToLowerInvariant();
         var user = (c.UserId ?? string.Empty).Trim().ToLowerInvariant();
         return $"mysql|{server}|{port}|{db}|{user}";
+    }
+
+    public static string Of(OracleConnectionInfo c)
+    {
+        var server = (c.Server ?? string.Empty).Trim().ToLowerInvariant();
+        var port = c.Port.ToString(CultureInfo.InvariantCulture);
+        var svc = (c.ServiceName ?? string.Empty).Trim().ToLowerInvariant();
+        var user = (c.UserId ?? string.Empty).Trim().ToLowerInvariant();
+        return $"oracle|{server}|{port}|{svc}|{user}";
     }
 }

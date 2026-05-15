@@ -9,7 +9,7 @@ namespace Migrator.Core;
 /// </summary>
 public sealed class MigrationPlan
 {
-    /// <summary>Origen: <c>sqlServer</c> (por defecto) o <c>mySql</c>.</summary>
+    /// <summary>Origen: <c>sqlServer</c> (por defecto), <c>mySql</c> u <c>oracle</c>.</summary>
     public string SourceKind { get; set; } = "sqlServer";
 
     public SqlServerConnectionInfo Source { get; set; } = new();
@@ -17,12 +17,18 @@ public sealed class MigrationPlan
     /// <summary>Origen MySQL cuando <see cref="SourceKind"/> es <c>mySql</c>.</summary>
     public MySqlConnectionInfo? MySqlSource { get; set; }
 
+    /// <summary>Origen Oracle cuando <see cref="SourceKind"/> es <c>oracle</c>.</summary>
+    public OracleConnectionInfo? OracleSource { get; set; }
+
     public SqlServerConnectionInfo Target { get; set; } = new();
 
     public List<TableMapping> Tables { get; set; } = new();
 
     public bool UsesMySqlSource() =>
         string.Equals(SourceKind?.Trim(), "mySql", StringComparison.OrdinalIgnoreCase);
+
+    public bool UsesOracleSource() =>
+        string.Equals(SourceKind?.Trim(), "oracle", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class TableMapping
@@ -58,7 +64,7 @@ public sealed class ColumnMapping
 
     /// <summary>
     /// Fragmento SQL opcional usado en el SELECT del origen en lugar del nombre entre corchetes o backticks.
-    /// Debe referenciar la tabla origen con el alias <c>s</c> (p. ej. SQL Server: <c>ISNULL(s.[col], 0)</c>; MySQL: <c>IFNULL(s.`col`,0)</c>).
+    /// Debe referenciar la tabla origen con el alias <c>s</c> (p. ej. SQL Server: <c>ISNULL(s.[col], 0)</c>; MySQL: <c>IFNULL(s.`col`,0)</c>; Oracle: columnas entre comillas dobles con <c>s.</c>).
     /// </summary>
     public string? SourceExpression { get; set; }
 }
