@@ -491,6 +491,12 @@ FROM {targetQualified};";
             return col.SourceExpression.Trim();
         }
 
+        if (string.IsNullOrWhiteSpace(col.Source))
+        {
+            throw new InvalidOperationException(
+                "ColumnMapping: falta Source y SourceExpression; se requiere al menos uno.");
+        }
+
         var src = col.Source.Trim();
         return sourceDialect switch
         {

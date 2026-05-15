@@ -241,6 +241,7 @@
                         <button type="button" class="btn btn-outline-secondary" title="CONVERT a varchar" @onclick="() => ApplyConvertVarcharTemplate(index)">CONVERT</button>
                         <button type="button" class="btn btn-outline-secondary" title="CASE WHEN simple" @onclick="() => ApplyCaseTemplate(index)">CASE</button>
                         <button type="button" class="btn btn-outline-secondary" title="COALESCE con segunda columna (edita)" @onclick="() => ApplyCoalesceTemplate(index)">COALESCE</button>
+                        <button type="button" class="btn btn-outline-secondary" title="Fecha y hora actuales (GETDATE())" @onclick="() => ApplyGetDateTemplate(index)">GETDATE</button>
                     </div>
                 </div>
                 <div class="col-12 col-md-3">
@@ -1276,11 +1277,16 @@ else
     private void SuggestByName()
     {
         columnRows.Clear();
-        foreach (var s in sourceColumns)
+        foreach (var t in targetColumns)
         {
-            var match = targetColumns.FirstOrDefault(t =>
-                string.Equals(t.Name, s.Name, StringComparison.OrdinalIgnoreCase));
-            columnRows.Add(new ColumnRow { Source = s.Name, Target = match?.Name ?? string.Empty, SourceExpression = string.Empty });
+            var match = sourceColumns.FirstOrDefault(s =>
+                string.Equals(s.Name, t.Name, StringComparison.OrdinalIgnoreCase));
+            columnRows.Add(new ColumnRow
+            {
+                Source = match?.Name ?? string.Empty,
+                Target = t.Name,
+                SourceExpression = string.Empty,
+            });
         }
 
         if (columnRows.Count == 0)
@@ -1289,7 +1295,8 @@ else
             columnRows.Add(new ColumnRow());
         }
 
-        statusMessage = "Mapeo sugerido por nombre de columna (origen = destino cuando coincide).";
+        statusMessage =
+            "Mapeo sugerido: una fila por columna destino (orden de inserción). Origen vacío si no hay homónima en el servidor origen; rellena la transformación con un literal o expresión.";
     }
 
     private void ApplyIsNullTemplate(int index)
@@ -1348,6 +1355,12 @@ else
         statusMessage = "Plantilla COALESCE: añade otra columna o literal como segundo argumento.";
     }
 
+    private void ApplyGetDateTemplate(int index)
+    {
+        columnRows[index].SourceExpression = "GETDATE()";
+        statusMessage = "Plantilla GETDATE() aplicada (fecha y hora actuales).";
+    }
+
     private static string BracketIdentifier(string name) =>
         "[" + name.Replace("]", "]]", StringComparison.Ordinal) + "]";
 
@@ -1383,14 +1396,17 @@ else
         }
 
         var cols = columnRows
-            .Where(r => !string.IsNullOrWhiteSpace(r.Source) || !string.IsNullOrWhiteSpace(r.Target))
-            .Select(r => new ColumnMapping
+            .Where(static r =>
+                !string.IsNullOrWhiteSpace(r.Source)
+                || (!string.IsNullOrWhiteSpace(r.Target) && !string.IsNullOrWhiteSpace(r.SourceExpression)))
+            .Select(static r => new ColumnMapping
             {
-                Source = r.Source.Trim(),
-                Target = string.IsNullOrWhiteSpace(r.Target) ? r.Source.Trim() : r.Target.Trim(),
+                Source = string.IsNullOrWhiteSpace(r.Source) ? string.Empty : r.Source.Trim(),
+                Target = string.IsNullOrWhiteSpace(r.Target)
+                    ? (string.IsNullOrWhiteSpace(r.Source) ? string.Empty : r.Source.Trim())
+                    : r.Target.Trim(),
                 SourceExpression = string.IsNullOrWhiteSpace(r.SourceExpression) ? null : r.SourceExpression.Trim(),
             })
-            .Where(c => c.Source.Length > 0)
             .ToList();
 
         if (string.IsNullOrWhiteSpace(draftSource) || string.IsNullOrWhiteSpace(draftTarget))

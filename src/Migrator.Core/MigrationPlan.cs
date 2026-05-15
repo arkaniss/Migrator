@@ -64,14 +64,18 @@ public sealed class TableMapping
 
 public sealed class ColumnMapping
 {
-    /// <summary>Nombre lógico de la columna en el origen (clave natural y metadatos).</summary>
+    /// <summary>
+    /// Nombre de la columna en el origen. Puede dejarse vacío si <see cref="SourceExpression"/> define
+    /// todo el fragmento del SELECT (p. ej. literal <c>NULL</c> o <c>'texto'</c> sin usar <c>s.</c>).
+    /// </summary>
     public string Source { get; set; } = string.Empty;
 
     public string Target { get; set; } = string.Empty;
 
     /// <summary>
     /// Fragmento SQL opcional usado en el SELECT del origen en lugar del nombre entre corchetes o backticks.
-    /// Debe referenciar la tabla origen con el alias <c>s</c> (p. ej. SQL Server: <c>ISNULL(s.[col], 0)</c>; MySQL: <c>IFNULL(s.`col`,0)</c>; Oracle: columnas entre comillas dobles con <c>s.</c>).
+    /// Si <see cref="Source"/> está vacío, aquí va el fragmento completo (p. ej. literal <c>0</c> o <c>N'x'</c>).
+    /// Si hay <see cref="Source"/>, suele referenciar la tabla con el alias <c>s</c> (p. ej. SQL Server: <c>ISNULL(s.[col], 0)</c>; MySQL: <c>IFNULL(s.`col`,0)</c>; Oracle: identificador entre comillas dobles con prefijo <c>s.</c>).
     /// </summary>
     public string? SourceExpression { get; set; }
 }

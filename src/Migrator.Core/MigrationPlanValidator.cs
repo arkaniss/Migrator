@@ -59,12 +59,43 @@ public static class MigrationPlanValidator
             else
             {
                 var sourceCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var resolvedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 for (var c = 0; c < t.Columns.Count; c++)
                 {
                     var col = t.Columns[c];
+                    var resolvedTarget = string.IsNullOrWhiteSpace(col.Target)
+                        ? (string.IsNullOrWhiteSpace(col.Source) ? string.Empty : col.Source.Trim())
+                        : col.Target.Trim();
+
                     if (string.IsNullOrWhiteSpace(col.Source))
                     {
-                        errors.Add($"Tablas[{i}] ({label}), columna[{c}]: Source es obligatorio.");
+                        if (string.IsNullOrWhiteSpace(col.SourceExpression))
+                        {
+                            errors.Add(
+                                $"Tablas[{i}] ({label}), columna[{c}]: sin columna origen debe indicarse SourceExpression (p. ej. un literal) y Target.");
+                            continue;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(resolvedTarget))
+                        {
+                            errors.Add(
+                                $"Tablas[{i}] ({label}), columna[{c}]: con Source vacío debe indicarse el nombre de columna destino (Target).");
+                            continue;
+                        }
+
+                        if (!resolvedTargets.Add(resolvedTarget))
+                        {
+                            errors.Add(
+                                $"Tablas[{i}] ({label}): la columna destino '{resolvedTarget}' está duplicada en el mapeo.");
+                        }
+
+                        var exprErrLiteral = SourceExpressionSyntax.Validate(col.SourceExpression);
+                        if (exprErrLiteral is not null)
+                        {
+                            errors.Add(
+                                $"Tablas[{i}] ({label}), columna destino '{resolvedTarget}' (valor fijo): {exprErrLiteral}");
+                        }
+
                         continue;
                     }
 
@@ -72,6 +103,12 @@ public static class MigrationPlanValidator
                     if (!sourceCols.Add(src))
                     {
                         errors.Add($"Tablas[{i}] ({label}): la columna origen '{src}' está duplicada.");
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(resolvedTarget) && !resolvedTargets.Add(resolvedTarget))
+                    {
+                        errors.Add(
+                            $"Tablas[{i}] ({label}): la columna destino '{resolvedTarget}' está duplicada en el mapeo.");
                     }
 
                     var exprErr = SourceExpressionSyntax.Validate(col.SourceExpression);
