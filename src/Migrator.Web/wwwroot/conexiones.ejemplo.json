@@ -39,15 +39,15 @@
       }
     },
     {
-      "id": "ejemplo04",
-      "name": "Oracle XE · PDB",
+      "id": "ejemplo05",
+      "name": "PostgreSQL local",
       "lastUsedAt": "2026-05-12T12:00:00+00:00",
-      "kind": "oracle",
-      "oracle": {
+      "kind": "postgresql",
+      "postgreSql": {
         "server": "127.0.0.1",
-        "port": 1521,
-        "serviceName": "XEPDB1",
-        "userId": "HR",
+        "port": 5432,
+        "database": "MiBasePg",
+        "userId": "postgres",
         "password": ""
       }
     }

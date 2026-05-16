@@ -147,6 +147,11 @@ public static class MigrationPlanValidator
             return ValidateOracleConnection(plan.OracleSource, "Origen (Oracle)");
         }
 
+        if (plan.UsesPostgresqlSource())
+        {
+            return ValidatePostgreSqlConnection(plan.PostgreSqlSource, "Origen (PostgreSQL)");
+        }
+
         if (plan.UsesMySqlSource())
         {
             return ValidateMySqlConnection(plan.MySqlSource, "Origen (MySQL)");
@@ -176,6 +181,35 @@ public static class MigrationPlanValidator
         if (string.IsNullOrWhiteSpace(info.ServiceName))
         {
             yield return $"{label}: indique el nombre de servicio (Easy Connect: host:puerto/servicio).";
+        }
+
+        if (string.IsNullOrWhiteSpace(info.UserId))
+        {
+            yield return $"{label}: indique el usuario.";
+        }
+    }
+
+    private static IEnumerable<string> ValidatePostgreSqlConnection(PostgreSqlConnectionInfo? info, string label)
+    {
+        if (info is null)
+        {
+            yield return $"{label}: no hay datos de conexión.";
+            yield break;
+        }
+
+        if (string.IsNullOrWhiteSpace(info.Server))
+        {
+            yield return $"{label}: indique el servidor o host.";
+        }
+
+        if (info.Port is < 1 or > 65535)
+        {
+            yield return $"{label}: el puerto debe estar entre 1 y 65535.";
+        }
+
+        if (string.IsNullOrWhiteSpace(info.Database))
+        {
+            yield return $"{label}: indique la base de datos.";
         }
 
         if (string.IsNullOrWhiteSpace(info.UserId))

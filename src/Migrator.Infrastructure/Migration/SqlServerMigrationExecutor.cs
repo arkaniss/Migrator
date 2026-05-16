@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Migrator.Core;
 using Migrator.Infrastructure.Data;
 using MySqlConnector;
+using Npgsql;
 using Oracle.ManagedDataAccess.Client;
 
 namespace Migrator.Infrastructure.Migration;
@@ -20,6 +21,7 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         SqlServer,
         MySql,
         Oracle,
+        PostgreSql,
     }
 
     public async Task<MigrationExecutionSummary> ExecuteAsync(
@@ -40,6 +42,8 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
 
         var dialect = plan.UsesOracleSource()
             ? SourceDialect.Oracle
+            : plan.UsesPostgresqlSource()
+                ? SourceDialect.PostgreSql
             : plan.UsesMySqlSource()
                 ? SourceDialect.MySql
                 : SourceDialect.SqlServer;
@@ -58,6 +62,33 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
                 try
                 {
                     row = await ProcessTableAsync(oracle, dialect, targetSql, table, options, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    overallSuccess = false;
+                    row = new TableMigrationResult(table.Source, table.Target, 0, 0, ex.Message);
+                }
+
+                results.Add(row);
+                if (row.Error is not null)
+                {
+                    overallSuccess = false;
+                    break;
+                }
+            }
+        }
+        else if (plan.UsesPostgresqlSource())
+        {
+            var pgCs = PostgreSqlConnectionStringFactory.Build(plan.PostgreSqlSource!);
+            await using var pg = new NpgsqlConnection(pgCs);
+            await pg.OpenAsync(cancellationToken);
+
+            foreach (var table in plan.Tables)
+            {
+                TableMigrationResult row;
+                try
+                {
+                    row = await ProcessTableAsync(pg, dialect, targetSql, table, options, cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -144,6 +175,7 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         {
             SourceDialect.MySql => MySqlIdentifier.Qualify(table.Source),
             SourceDialect.Oracle => OracleIdentifier.Qualify(table.Source),
+            SourceDialect.PostgreSql => PostgreSqlIdentifier.Qualify(table.Source),
             _ => SqlIdentifier.Qualify(table.Source),
         };
         var targetQualified = SqlIdentifier.Qualify(table.Target);
@@ -210,7 +242,9 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         string sourceQualified,
         CancellationToken cancellationToken)
     {
-        var countExpr = sourceDialect is SourceDialect.MySql or SourceDialect.Oracle ? "COUNT(*)" : "COUNT_BIG(1)";
+        var countExpr = sourceDialect is SourceDialect.MySql or SourceDialect.Oracle or SourceDialect.PostgreSql
+            ? "COUNT(*)"
+            : "COUNT_BIG(1)";
         var fromAndAlias = sourceDialect == SourceDialect.Oracle
             ? $" FROM {sourceQualified} s"
             : $" FROM {sourceQualified} AS s";
@@ -475,6 +509,7 @@ FROM {targetQualified};";
         {
             SourceDialect.MySql => MySqlIdentifier.Backtick(columnName),
             SourceDialect.Oracle => OracleIdentifier.Quote(columnName),
+            SourceDialect.PostgreSql => PostgreSqlIdentifier.Quote(columnName),
             _ => SqlIdentifier.Bracket(columnName),
         };
 
@@ -502,6 +537,7 @@ FROM {targetQualified};";
         {
             SourceDialect.MySql => $"s.{MySqlIdentifier.Backtick(src)}",
             SourceDialect.Oracle => $"s.{OracleIdentifier.Quote(src)}",
+            SourceDialect.PostgreSql => $"s.{PostgreSqlIdentifier.Quote(src)}",
             _ => $"s.{SqlIdentifier.Bracket(src)}",
         };
     }

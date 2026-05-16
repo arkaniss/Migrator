@@ -32,3 +32,7 @@ public sealed record MysqlMetadataColumnsRequest(MySqlConnectionInfo Connection,
 public sealed record OracleMetadataTablesRequest(OracleConnectionInfo Connection);
 
 public sealed record OracleMetadataColumnsRequest(OracleConnectionInfo Connection, string Table);
+
+public sealed record PostgresqlMetadataTablesRequest(PostgreSqlConnectionInfo Connection);
+
+public sealed record PostgresqlMetadataColumnsRequest(PostgreSqlConnectionInfo Connection, string Table);

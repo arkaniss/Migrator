@@ -82,7 +82,7 @@
         }
         else
         {
-            <div class="table-responsive mb-3">
+            <div class="table-responsive mb-3" style="max-height: 250px;overflow: auto;">
                 <table class="table table-sm align-middle">
                     <thead><tr><th>Nombre</th><th>Tipo</th><th>Servidor</th><th>Base</th><th>Último uso</th><th></th></tr></thead>
                     <tbody>
@@ -147,7 +147,7 @@
                 <option value="">— Elegir —</option>
                 @foreach (var t in sourceTables)
                 {
-                    <option value="@t.QualifiedName">@t.QualifiedName</option>
+                    <option value="@t.QualifiedName" class="@RegistryCssForDraftSourceOption(t.QualifiedName)">@t.QualifiedName</option>
                 }
             </InputSelect>
         </div>
@@ -157,7 +157,7 @@
                 <option value="">— Elegir —</option>
                 @foreach (var t in targetTables)
                 {
-                    <option value="@t.QualifiedName">@t.QualifiedName</option>
+                    <option value="@t.QualifiedName" class="@RegistryCssForDraftTargetOption(t.QualifiedName)">@t.QualifiedName</option>
                 }
             </InputSelect>
         </div>
@@ -306,9 +306,9 @@ else
                         <label class="form-check-label visually-hidden" for="@($"sel_{idx}")">Seleccionar @t.Source</label>
                     </div>
                     <div class="flex-grow-1">
-                        <strong>@t.Source</strong>
+                        <span class="@(RegistryCssForMapping(t) ?? "")"><strong>@t.Source</strong></span>
                         <span class="text-muted">→</span>
-                        <strong>@t.Target</strong>
+                        <span class="@(RegistryCssForMapping(t) ?? "")"><strong>@t.Target</strong></span>
                         <span class="badge bg-secondary ms-2">@t.Mode</span>
                         <div class="small text-muted">@t.Columns.Count columnas · @(t.Columns.Count(c => !string.IsNullOrWhiteSpace(c.SourceExpression))) con transformación SQL · claves: @(t.KeyColumns.Count == 0 ? "—" : string.Join(", ", t.KeyColumns))@(IdentityOptionsSuffix(t))</div>
                         @if (lastRunBySource.TryGetValue(t.Source, out var st))
@@ -351,6 +351,55 @@ else
         </div>
     </div>
 }
+
+<div class="card mb-4 border-secondary">
+    <div class="card-header fw-semibold">Registro de migraciones (origen MySQL)</div>
+    <div class="card-body">
+        <p class="small text-muted mb-2">
+            Base de control en <code>ConnectionStrings:MigrationRegistry</code> de la API (p. ej. base <strong>Migrator</strong>).
+            Solo se listan trabajos con <strong>origen MySQL</strong> en BD (<code>SourceKind=mySql</code>).
+            Elegir en la lista solo <em>vincula</em> el trabajo al navegador; usa <strong>Cargar plan del trabajo activo</strong> para reemplazar el plan por el JSON guardado en BD.
+            Colores: <span class="text-success">completada</span>, <span class="text-danger">error</span>, <span class="text-info">dry-run ok</span>, <span class="text-warning">dry-run fallo</span>.
+        </p>
+        @if (registryLastExecuted is not null && registryLastExecuted.WorkPlanId is not null)
+        {
+            <p class="small mb-2">
+                Último ejecutado en registro: <code>@registryLastExecuted.WorkPlanId</code>
+                @if (registryLastExecuted.ExecutedAt is not null)
+                {
+                    <span class="text-muted">· @registryLastExecuted.ExecutedAt.Value.ToLocalTime().ToString("g")</span>
+                }
+            </p>
+        }
+        <div class="row g-2 align-items-end mb-3">
+            <div class="col-md-4">
+                <label class="form-label small mb-0">Trabajo activo (MySQL)</label>
+                <select class="form-select form-select-sm"
+                        value="@ActiveRegistrySelectValue"
+                        @onchange="OnRegistryWorkPlanSelectionChanged">
+                    <option value="">— Sin trabajo vinculado —</option>
+                    @foreach (var w in RegistryWorkPlansForPage)
+                    {
+                        <option value="@w.Id">@w.Name · @w.SourceKind · @w.TableCount tablas · @w.UpdatedAt.ToLocalTime().ToString("g")</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small mb-0">Nombre al guardar</label>
+                <InputText class="form-control form-control-sm" @bind-Value="registryWorkPlanName" placeholder="p. ej. Clientes fase 1" />
+            </div>
+            <div class="col-md-4 d-flex flex-wrap gap-2 align-items-end">
+                <button type="button" class="btn btn-primary btn-sm" @onclick="SavePlanToRegistryAsync" disabled="@(plan.Tables.Count == 0)">Guardar plan en registro (BD)</button>
+            </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="RefreshRegistryRemoteAsync">Actualizar lista</button>
+            <button type="button" class="btn btn-outline-primary btn-sm" @onclick="UseLastExecutedRegistryPlanAsync" disabled="@(registryLastExecuted?.WorkPlanId is null)">Cargar último ejecutado</button>
+            <button type="button" class="btn btn-outline-primary btn-sm" @onclick="LoadActiveRegistryPlanAsync" disabled="@(activeRegistryWorkPlanId is null)">Cargar plan del trabajo activo (BD)</button>
+            <button type="button" class="btn btn-outline-danger btn-sm" @onclick="DeleteActiveRegistryWorkPlanAsync" disabled="@(activeRegistryWorkPlanId is null)">Eliminar trabajo activo del registro</button>
+        </div>
+    </div>
+</div>
 
 <div class="card mb-4">
     <div class="card-header">Snapshots en este navegador</div>
@@ -407,6 +456,8 @@ else
     private const string SnapshotsKey = "migrator.mysql.snapshots.v1";
     private const string RunStateKey = "migrator.mysql.runstate.v1";
     private const string SavedConnectionsKey = "migrator.savedConnections.v1";
+    private const string RegistryWorkPlanIdKey = "migrator.registryActiveWorkPlanId.v1.mySql";
+    private const string RegistryPageExpectedSourceKind = "mySql";
 
     private static readonly JsonSerializerOptions JsonRead = new() { PropertyNameCaseInsensitive = true };
     private static readonly JsonSerializerOptions JsonWrite = new() { WriteIndented = false };
@@ -433,12 +484,18 @@ else
         string.Equals(x.Kind, "sqlServer", StringComparison.OrdinalIgnoreCase);
 
     private static string SavedConnectionKindLabel(SavedConnectionEntry s) =>
-        string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) ? "MySQL"
+        string.Equals(s.Kind, "postgresql", StringComparison.OrdinalIgnoreCase) ? "PostgreSQL"
+        : string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) ? "MySQL"
         : string.Equals(s.Kind, "oracle", StringComparison.OrdinalIgnoreCase) ? "Oracle"
         : "SQL Server";
 
     private static string SavedConnectionServer(SavedConnectionEntry s)
     {
+        if (string.Equals(s.Kind, "postgresql", StringComparison.OrdinalIgnoreCase) && s.PostgreSql is not null)
+        {
+            return $"{s.PostgreSql.Server}:{s.PostgreSql.Port}";
+        }
+
         if (string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && s.MySql is not null)
         {
             return $"{s.MySql.Server}:{s.MySql.Port}";
@@ -454,6 +511,11 @@ else
 
     private static string SavedConnectionDatabase(SavedConnectionEntry s)
     {
+        if (string.Equals(s.Kind, "postgresql", StringComparison.OrdinalIgnoreCase) && s.PostgreSql is not null)
+        {
+            return s.PostgreSql.Database;
+        }
+
         if (string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && s.MySql is not null)
         {
             return s.MySql.Database;
@@ -494,6 +556,37 @@ else
     private string snapshotName = string.Empty;
     private bool storageLoaded;
 
+    private List<RegistryWorkPlanSummaryDto> registryWorkPlans = new();
+    private Guid? activeRegistryWorkPlanId;
+    private string registryWorkPlanName = string.Empty;
+    private readonly Dictionary<string, RegistryTableProgressDto> registryProgressByPair = new(StringComparer.Ordinal);
+    private RegistryLastExecutedDto? registryLastExecuted;
+
+    private string ActiveRegistrySelectValue => activeRegistryWorkPlanId?.ToString() ?? string.Empty;
+
+    private IEnumerable<RegistryWorkPlanSummaryDto> RegistryWorkPlansForPage =>
+        registryWorkPlans.Where(RegistrySummaryMatchesPage);
+
+    private bool RegistrySummaryMatchesPage(RegistryWorkPlanSummaryDto w) =>
+        string.Equals((w.SourceKind ?? string.Empty).Trim(), RegistryPageExpectedSourceKind, StringComparison.OrdinalIgnoreCase);
+
+    private async Task NormalizeActiveRegistryForPageKindAsync()
+    {
+        if (activeRegistryWorkPlanId is null)
+        {
+            return;
+        }
+
+        var meta = registryWorkPlans.FirstOrDefault(x => x.Id == activeRegistryWorkPlanId.Value);
+        if (meta is null || !RegistrySummaryMatchesPage(meta))
+        {
+            activeRegistryWorkPlanId = null;
+            registryProgressByPair.Clear();
+            registryWorkPlanName = string.Empty;
+            await PersistActiveRegistryWorkPlanIdAsync();
+        }
+    }
+
     private List<SavedConnectionEntry> savedConnections = new();
     private string newPresetNameSource = string.Empty;
     private string newPresetNameTarget = string.Empty;
@@ -509,6 +602,7 @@ else
 
         storageLoaded = true;
         await LoadBrowserStorageAsync();
+        await RefreshRegistryRemoteAsync();
         StateHasChanged();
     }
 
@@ -544,6 +638,12 @@ else
                     savedConnections = envelope.Connections;
                     NormalizeSavedConnectionKinds();
                 }
+            }
+
+            var regRaw = await Js.InvokeAsync<string?>("migratorLocalStorage.getItem", RegistryWorkPlanIdKey);
+            if (Guid.TryParse(regRaw, out var regId))
+            {
+                activeRegistryWorkPlanId = regId;
             }
         }
         catch
@@ -584,6 +684,8 @@ else
                      && !string.IsNullOrWhiteSpace(c.Oracle.Server)
                      && !string.IsNullOrWhiteSpace(c.Oracle.ServiceName)
                 ? "oracle"
+                : c.PostgreSql is not null && !string.IsNullOrWhiteSpace(c.PostgreSql.Server)
+                    ? "postgresql"
                 : c.MySql is not null && !string.IsNullOrWhiteSpace(c.MySql.Server)
                     ? "mySql"
                     : "sqlServer";
@@ -608,6 +710,7 @@ else
             existing.Connection = CloneConn(info);
             existing.MySql = null;
             existing.Oracle = null;
+            existing.PostgreSql = null;
             existing.LastUsedAt = DateTimeOffset.UtcNow;
             if (!string.IsNullOrWhiteSpace(preferredName))
             {
@@ -628,12 +731,18 @@ else
             Connection = CloneConn(info),
             MySql = null,
             Oracle = null,
+            PostgreSql = null,
             LastUsedAt = DateTimeOffset.UtcNow,
         });
     }
 
     private static string FormatSavedConnectionLabel(SavedConnectionEntry s)
     {
+        if (string.Equals(s.Kind, "postgresql", StringComparison.OrdinalIgnoreCase) && s.PostgreSql is not null)
+        {
+            return $"{s.Name} ({s.PostgreSql.Server}:{s.PostgreSql.Port} · {s.PostgreSql.Database})";
+        }
+
         if (string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && s.MySql is not null)
         {
             return $"{s.Name} ({s.MySql.Server}:{s.MySql.Port} · {s.MySql.Database})";
@@ -671,6 +780,7 @@ else
             existing.MySql = CloneMySql(info);
             existing.Connection = null;
             existing.Oracle = null;
+            existing.PostgreSql = null;
             existing.LastUsedAt = DateTimeOffset.UtcNow;
             if (!string.IsNullOrWhiteSpace(preferredName))
             {
@@ -691,6 +801,7 @@ else
             Connection = null,
             MySql = CloneMySql(info),
             Oracle = null,
+            PostgreSql = null,
             LastUsedAt = DateTimeOffset.UtcNow,
         });
     }
@@ -700,6 +811,61 @@ else
         {
             Server = c.Server,
             Port = c.Port is >= 1 and <= 65535 ? c.Port : 3306,
+            Database = c.Database,
+            UserId = c.UserId,
+            Password = c.Password,
+        };
+
+    private void UpsertPostgreSqlConnectionFromUsage(PostgreSqlConnectionInfo info, string? preferredName = null)
+    {
+        if (string.IsNullOrWhiteSpace(info.Server) || string.IsNullOrWhiteSpace(info.Database))
+        {
+            return;
+        }
+
+        var fp = SavedConnectionFingerprint.Of(info);
+        var existing = savedConnections.FirstOrDefault(x =>
+            string.Equals(x.Kind, "postgresql", StringComparison.OrdinalIgnoreCase)
+            && x.PostgreSql is not null
+            && SavedConnectionFingerprint.Of(x.PostgreSql) == fp);
+
+        if (existing is not null)
+        {
+            existing.Kind = "postgresql";
+            existing.PostgreSql = ClonePostgreSql(info);
+            existing.Connection = null;
+            existing.MySql = null;
+            existing.Oracle = null;
+            existing.LastUsedAt = DateTimeOffset.UtcNow;
+            if (!string.IsNullOrWhiteSpace(preferredName))
+            {
+                existing.Name = preferredName.Trim();
+            }
+
+            return;
+        }
+
+        var name = !string.IsNullOrWhiteSpace(preferredName)
+            ? preferredName!.Trim()
+            : $"{info.Server.Trim()}:{info.Port} · {info.Database.Trim()}";
+
+        savedConnections.Add(new SavedConnectionEntry
+        {
+            Kind = "postgresql",
+            Name = name,
+            Connection = null,
+            MySql = null,
+            Oracle = null,
+            PostgreSql = ClonePostgreSql(info),
+            LastUsedAt = DateTimeOffset.UtcNow,
+        });
+    }
+
+    private static PostgreSqlConnectionInfo ClonePostgreSql(PostgreSqlConnectionInfo c) =>
+        new()
+        {
+            Server = c.Server,
+            Port = c.Port is >= 1 and <= 65535 ? c.Port : 5432,
             Database = c.Database,
             UserId = c.UserId,
             Password = c.Password,
@@ -729,6 +895,7 @@ else
             existing.Oracle = CloneOracle(info);
             existing.Connection = null;
             existing.MySql = null;
+            existing.PostgreSql = null;
             existing.LastUsedAt = DateTimeOffset.UtcNow;
             if (!string.IsNullOrWhiteSpace(preferredName))
             {
@@ -749,6 +916,7 @@ else
             Connection = null,
             MySql = null,
             Oracle = CloneOracle(info),
+            PostgreSql = null,
             LastUsedAt = DateTimeOffset.UtcNow,
         });
     }
@@ -898,7 +1066,11 @@ else
             foreach (var row in imported.Connections)
             {
                 NormalizeImportedConnectionRow(row);
-                if (string.Equals(row.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && row.MySql is not null)
+                if (string.Equals(row.Kind, "postgresql", StringComparison.OrdinalIgnoreCase) && row.PostgreSql is not null)
+                {
+                    UpsertPostgreSqlConnectionFromUsage(row.PostgreSql, string.IsNullOrWhiteSpace(row.Name) ? null : row.Name.Trim());
+                }
+                else if (string.Equals(row.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && row.MySql is not null)
                 {
                     UpsertMySqlConnectionFromUsage(row.MySql, string.IsNullOrWhiteSpace(row.Name) ? null : row.Name.Trim());
                 }
@@ -930,6 +1102,8 @@ else
                      && !string.IsNullOrWhiteSpace(row.Oracle.Server)
                      && !string.IsNullOrWhiteSpace(row.Oracle.ServiceName)
                 ? "oracle"
+                : row.PostgreSql is not null && !string.IsNullOrWhiteSpace(row.PostgreSql.Server)
+                    ? "postgresql"
                 : row.MySql is not null && !string.IsNullOrWhiteSpace(row.MySql.Server)
                     ? "mySql"
                     : "sqlServer";
@@ -1031,6 +1205,7 @@ else
             }
 
             MergeRunResults(summary, dryRun);
+            await TryRecordRegistryAsync(summary, dryRun);
             foreach (var row in summary.Tables ?? Array.Empty<TableMigrationResult>())
             {
                 sb.AppendLine($"{row.Source}: {(row.Error is null ? $"OK, filas {row.RowsRead}" : row.Error)}");
@@ -1038,6 +1213,8 @@ else
         }
 
         await PersistRunStateAsync();
+        await RefreshRegistryLastAndProgressAsync();
+
         statusMessage = "Ejecución uno a uno:\n" + sb;
         StateHasChanged();
     }
@@ -1096,7 +1273,9 @@ else
             }
 
             MergeRunResults(summary, dryRun);
+            await TryRecordRegistryAsync(summary, dryRun);
             await PersistRunStateAsync();
+            await RefreshRegistryLastAndProgressAsync();
 
             var lines = (summary.Tables ?? Array.Empty<TableMigrationResult>()).Select(t =>
                 $"{t.Source}: {(t.Error is null ? $"filas leídas {t.RowsRead}" : t.Error)}");
@@ -1110,6 +1289,410 @@ else
         {
             statusMessage = ex.Message;
         }
+    }
+
+    private async Task RefreshRegistryLastAndProgressAsync()
+    {
+        if (activeRegistryWorkPlanId is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var http = HttpFactory.CreateClient("MigratorApi");
+            registryLastExecuted = await http.GetFromJsonAsync<RegistryLastExecutedDto>("api/migration/registry/last-executed", JsonRead);
+            await FetchRegistryProgressAsync();
+        }
+        catch
+        {
+            /* API sin registro o no disponible */
+        }
+    }
+
+    private async Task RefreshRegistryRemoteAsync()
+    {
+        try
+        {
+            var http = HttpFactory.CreateClient("MigratorApi");
+            var listResp = await http.GetAsync("api/migration/registry/work-plans");
+            if (listResp.IsSuccessStatusCode)
+            {
+                registryWorkPlans =
+                    await listResp.Content.ReadFromJsonAsync<List<RegistryWorkPlanSummaryDto>>(JsonRead)
+                    ?? new List<RegistryWorkPlanSummaryDto>();
+            }
+
+            registryLastExecuted =
+                await http.GetFromJsonAsync<RegistryLastExecutedDto>("api/migration/registry/last-executed", JsonRead);
+
+            await NormalizeActiveRegistryForPageKindAsync();
+
+            if (activeRegistryWorkPlanId is not null)
+            {
+                var meta = registryWorkPlans.FirstOrDefault(x => x.Id == activeRegistryWorkPlanId.Value);
+                if (meta is not null)
+                {
+                    registryWorkPlanName = meta.Name;
+                }
+            }
+
+            if (activeRegistryWorkPlanId is not null
+                && registryWorkPlans.All(x => x.Id != activeRegistryWorkPlanId.Value))
+            {
+                activeRegistryWorkPlanId = null;
+                registryProgressByPair.Clear();
+                await PersistActiveRegistryWorkPlanIdAsync();
+            }
+            else
+            {
+                await FetchRegistryProgressAsync();
+            }
+        }
+        catch
+        {
+            /* sin conexión o registro no configurado */
+        }
+    }
+
+    private async Task FetchRegistryProgressAsync()
+    {
+        registryProgressByPair.Clear();
+        if (activeRegistryWorkPlanId is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var http = HttpFactory.CreateClient("MigratorApi");
+            var resp = await http.GetAsync($"api/migration/registry/work-plans/{activeRegistryWorkPlanId.Value:N}/table-progress");
+            if (!resp.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            var list = await resp.Content.ReadFromJsonAsync<List<RegistryTableProgressDto>>(JsonRead);
+            if (list is null)
+            {
+                return;
+            }
+
+            foreach (var p in list)
+            {
+                registryProgressByPair[RegistryPairKey(p.SourceTable, p.TargetTable)] = p;
+            }
+        }
+        catch
+        {
+            /* ignorar */
+        }
+    }
+
+    private static string RegistryPairKey(string source, string target) => $"{source}\u001f{target}";
+
+    private async Task PersistActiveRegistryWorkPlanIdAsync()
+    {
+        try
+        {
+            if (activeRegistryWorkPlanId is null)
+            {
+                await Js.InvokeVoidAsync("migratorLocalStorage.removeItem", RegistryWorkPlanIdKey);
+            }
+            else
+            {
+                await Js.InvokeVoidAsync("migratorLocalStorage.setItem", RegistryWorkPlanIdKey,
+                    activeRegistryWorkPlanId.Value.ToString("D"));
+            }
+        }
+        catch
+        {
+            /* */
+        }
+    }
+
+    private async Task SavePlanToRegistryAsync()
+    {
+        if (plan.Tables.Count == 0)
+        {
+            statusMessage = "No hay tablas en el plan.";
+            return;
+        }
+
+        statusMessage = null;
+        try
+        {
+            var http = HttpFactory.CreateClient("MigratorApi");
+            var req = new SaveRegistryWorkPlanRequest
+            {
+                Id = activeRegistryWorkPlanId,
+                Name = string.IsNullOrWhiteSpace(registryWorkPlanName)
+                    ? "Plan " + DateTime.Now.ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)
+                    : registryWorkPlanName.Trim(),
+                Plan = MigrationPlanJson.Deserialize(MigrationPlanJson.Serialize(plan)),
+            };
+            var resp = await http.PostAsJsonAsync("api/migration/registry/work-plans", req);
+            if (!resp.IsSuccessStatusCode)
+            {
+                statusMessage = await resp.Content.ReadAsStringAsync();
+                return;
+            }
+
+            var saved = await resp.Content.ReadFromJsonAsync<SaveRegistryWorkPlanResponse>(JsonRead);
+            if (saved is null)
+            {
+                statusMessage = "Respuesta de registro no válida.";
+                return;
+            }
+
+            activeRegistryWorkPlanId = saved.Id;
+            registryWorkPlanName = saved.Name;
+            await PersistActiveRegistryWorkPlanIdAsync();
+            await RefreshRegistryRemoteAsync();
+            statusMessage = $"Plan guardado en registro BD: {saved.Name} ({saved.Id})";
+        }
+        catch (Exception ex)
+        {
+            statusMessage = ex.Message;
+        }
+    }
+
+    private async Task LoadRegistryWorkPlanFromApiAsync(Guid id)
+    {
+        statusMessage = null;
+        try
+        {
+            var http = HttpFactory.CreateClient("MigratorApi");
+            var resp = await http.GetAsync($"api/migration/registry/work-plans/{id:D}");
+            if (!resp.IsSuccessStatusCode)
+            {
+                statusMessage = await resp.Content.ReadAsStringAsync();
+                return;
+            }
+
+            var detail = await resp.Content.ReadFromJsonAsync<RegistryWorkPlanDetailDto>(JsonRead);
+            if (detail?.Plan is null || detail.Summary is null)
+            {
+                statusMessage = "Plan vacío en el registro.";
+                return;
+            }
+
+            if (!RegistrySummaryMatchesPage(detail.Summary))
+            {
+                statusMessage =
+                    $"Este trabajo en BD es de tipo origen «{detail.Summary.SourceKind}». Cárgalo desde la página de mapeo correspondiente.";
+                return;
+            }
+
+            var p = MigrationPlanJson.Deserialize(MigrationPlanJson.Serialize(detail.Plan));
+            plan.SourceKind = "mySql";
+            plan.MySqlSource =
+                p.MySqlSource is null ? new MySqlConnectionInfo() : CloneMySql(p.MySqlSource);
+            plan.Source = p.Source ?? new SqlServerConnectionInfo();
+            plan.Target = p.Target ?? new SqlServerConnectionInfo();
+            plan.OracleSource = null;
+            plan.PostgreSqlSource = null;
+            plan.Tables.Clear();
+            plan.Tables.AddRange(p.Tables);
+
+            activeRegistryWorkPlanId = id;
+            registryWorkPlanName = detail.Summary.Name;
+            await PersistActiveRegistryWorkPlanIdAsync();
+
+            selectedForRun.Clear();
+            foreach (var t in plan.Tables)
+            {
+                selectedForRun.Add(t.Source);
+            }
+
+            sourceTables = new List<SchemaTableDto>();
+            targetTables = new List<SchemaTableDto>();
+            sourceColumns = new List<SchemaColumnDto>();
+            targetColumns = new List<SchemaColumnDto>();
+
+            await FetchRegistryProgressAsync();
+            statusMessage = $"Plan cargado desde registro: {detail.Summary.Name}";
+        }
+        catch (Exception ex)
+        {
+            statusMessage = ex.Message;
+        }
+    }
+
+    private async Task UseLastExecutedRegistryPlanAsync()
+    {
+        await RefreshRegistryRemoteAsync();
+        if (registryLastExecuted?.WorkPlanId is not Guid wid)
+        {
+            statusMessage = "No hay último plan ejecutado en el registro.";
+            return;
+        }
+
+        var meta = registryWorkPlans.FirstOrDefault(x => x.Id == wid);
+        if (meta is null || !RegistrySummaryMatchesPage(meta))
+        {
+            statusMessage =
+                "El último plan ejecutado en BD no es de este flujo (origen MySQL). Elige otro trabajo o usa la página donde se creó el plan.";
+            return;
+        }
+
+        await LoadRegistryWorkPlanFromApiAsync(wid);
+        await RefreshRegistryRemoteAsync();
+        StateHasChanged();
+    }
+
+    private async Task OnRegistryWorkPlanSelectionChanged(ChangeEventArgs e)
+    {
+        var v = e.Value?.ToString();
+        if (string.IsNullOrEmpty(v) || !Guid.TryParse(v, out var id))
+        {
+            activeRegistryWorkPlanId = null;
+            registryProgressByPair.Clear();
+            registryWorkPlanName = string.Empty;
+            await PersistActiveRegistryWorkPlanIdAsync();
+            StateHasChanged();
+            return;
+        }
+
+        activeRegistryWorkPlanId = id;
+        var meta = registryWorkPlans.FirstOrDefault(x => x.Id == id);
+        if (meta is not null)
+        {
+            registryWorkPlanName = meta.Name;
+        }
+
+        await PersistActiveRegistryWorkPlanIdAsync();
+        await FetchRegistryProgressAsync();
+        StateHasChanged();
+    }
+
+    private async Task LoadActiveRegistryPlanAsync()
+    {
+        if (activeRegistryWorkPlanId is not Guid id)
+        {
+            return;
+        }
+
+        await LoadRegistryWorkPlanFromApiAsync(id);
+        await RefreshRegistryRemoteAsync();
+        StateHasChanged();
+    }
+
+    private async Task DeleteActiveRegistryWorkPlanAsync()
+    {
+        if (activeRegistryWorkPlanId is not Guid id)
+        {
+            return;
+        }
+
+        if (!await Js.InvokeAsync<bool>("confirm", "¿Eliminar este trabajo del registro en BD?"))
+        {
+            return;
+        }
+
+        try
+        {
+            var http = HttpFactory.CreateClient("MigratorApi");
+            var resp = await http.DeleteAsync($"api/migration/registry/work-plans/{id:D}");
+            activeRegistryWorkPlanId = null;
+            registryProgressByPair.Clear();
+            registryWorkPlanName = string.Empty;
+            await PersistActiveRegistryWorkPlanIdAsync();
+            await RefreshRegistryRemoteAsync();
+            statusMessage = resp.IsSuccessStatusCode
+                ? "Trabajo eliminado del registro."
+                : await resp.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            statusMessage = ex.Message;
+        }
+    }
+
+    private async Task TryRecordRegistryAsync(MigrationExecutionSummary summary, bool dryRun)
+    {
+        if (activeRegistryWorkPlanId is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var http = HttpFactory.CreateClient("MigratorApi");
+            var req = new RecordRegistryExecutionRequest
+            {
+                WorkPlanId = activeRegistryWorkPlanId.Value,
+                DryRun = dryRun,
+                Summary = summary,
+                UpdatePlanSnapshot = MigrationPlanJson.Deserialize(MigrationPlanJson.Serialize(plan)),
+            };
+            var resp = await http.PostAsJsonAsync("api/migration/registry/record-execution", req);
+            _ = resp;
+        }
+        catch
+        {
+            /* no bloquear la migración si el registro falla */
+        }
+    }
+
+    private static string? RegistryCssForStatus(string? status) =>
+        status switch
+        {
+            "completed" => "text-success",
+            "failed" => "text-danger",
+            "dryRunCompleted" => "text-info",
+            "dryRunFailed" => "text-warning",
+            _ => null,
+        };
+
+    private string? RegistryCssForMapping(TableMapping t)
+    {
+        if (activeRegistryWorkPlanId is null)
+        {
+            return null;
+        }
+
+        return registryProgressByPair.TryGetValue(RegistryPairKey(t.Source, t.Target), out var dto)
+            ? RegistryCssForStatus(dto.Status)
+            : null;
+    }
+
+    private string? RegistryCssForDraftSourceOption(string qualifiedName)
+    {
+        if (activeRegistryWorkPlanId is null)
+        {
+            return null;
+        }
+
+        var m =
+            plan.Tables.FirstOrDefault(x =>
+                string.Equals(x.Source, qualifiedName, StringComparison.OrdinalIgnoreCase));
+        if (m is null)
+        {
+            return null;
+        }
+
+        return registryProgressByPair.TryGetValue(RegistryPairKey(m.Source, m.Target), out var dto)
+            ? RegistryCssForStatus(dto.Status)
+            : null;
+    }
+
+    private string? RegistryCssForDraftTargetOption(string qualifiedName)
+    {
+        if (activeRegistryWorkPlanId is null || string.IsNullOrWhiteSpace(draftSource))
+        {
+            return null;
+        }
+
+        var m = plan.Tables.FirstOrDefault(x =>
+            string.Equals(x.Source, draftSource, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(x.Target, qualifiedName, StringComparison.OrdinalIgnoreCase));
+        if (m is null)
+        {
+            return null;
+        }
+
+        return RegistryCssForMapping(m);
     }
 
     private void MergeRunResults(MigrationExecutionSummary summary, bool dryRun)
@@ -1214,6 +1797,7 @@ else
         {
             UpsertMySqlConnectionFromUsage(plan.MySqlSource);
             await PersistSavedConnectionsAsync();
+            await FetchRegistryProgressAsync();
         }
     }
 
@@ -1227,6 +1811,7 @@ else
         {
             UpsertConnectionFromUsage(plan.Target);
             await PersistSavedConnectionsAsync();
+            await FetchRegistryProgressAsync();
         }
     }
 
@@ -1554,6 +2139,12 @@ else
             return;
         }
 
+        if (imported.UsesPostgresqlSource())
+        {
+            statusMessage = "Este archivo es de migración PostgreSQL → SQL Server. Ábrelo desde el menú PostgreSQL.";
+            return;
+        }
+
         if (!imported.UsesMySqlSource())
         {
             statusMessage = "Este archivo es de migración solo SQL Server → SQL Server. Ábrelo desde el menú SQL Server.";
@@ -1584,7 +2175,66 @@ else
         UpsertConnectionFromUsage(plan.Target);
         await PersistSavedConnectionsAsync();
 
-        statusMessage = $"Importado: {plan.Tables.Count} tabla(s). Conexiones añadidas/actualizadas en la biblioteca. Marca cuáles ejecutar y usa dry-run antes del real.";
+        var draftLoaded = TryApplyDraftFromImportedPlan();
+        var draftRowCount = columnRows.Count;
+        if (draftLoaded && !string.IsNullOrWhiteSpace(draftSource) && !string.IsNullOrWhiteSpace(draftTarget))
+        {
+            await LoadDraftColumnsAsync();
+        }
+
+        statusMessage = draftLoaded
+            ? $"Importado: {plan.Tables.Count} tabla(s). Borrador cargado para {draftSource} → {draftTarget} ({draftRowCount} filas) desde el JSON."
+              + (string.IsNullOrWhiteSpace(statusMessage) ? string.Empty : $" {statusMessage}")
+            : $"Importado: {plan.Tables.Count} tabla(s). Conexiones añadidas/actualizadas en la biblioteca. Marca cuáles ejecutar y usa dry-run antes del real.";
+    }
+
+    private bool TryApplyDraftFromImportedPlan()
+    {
+        if (string.IsNullOrWhiteSpace(draftSource) || string.IsNullOrWhiteSpace(draftTarget))
+        {
+            return false;
+        }
+
+        var match = plan.Tables.FirstOrDefault(t =>
+            string.Equals(t.Source.Trim(), draftSource.Trim(), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(t.Target.Trim(), draftTarget.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        if (match is null)
+        {
+            return false;
+        }
+
+        ApplyDraftFromTableMapping(match);
+        return true;
+    }
+
+    private void ApplyDraftFromTableMapping(TableMapping table)
+    {
+        draftSource = table.Source;
+        draftTarget = table.Target;
+        draftMode = string.IsNullOrWhiteSpace(table.Mode) ? "insert" : table.Mode.Trim();
+        draftKeys = table.KeyColumns.Count == 0
+            ? string.Empty
+            : string.Join(", ", table.KeyColumns.Where(static k => !string.IsNullOrWhiteSpace(k)));
+        draftReseedToZero = table.ReseedToZero;
+        draftPreserveIdentityValues = table.PreserveIdentityValues;
+
+        columnRows.Clear();
+        foreach (var col in table.Columns)
+        {
+            columnRows.Add(new ColumnRow
+            {
+                Source = col.Source ?? string.Empty,
+                Target = col.Target ?? string.Empty,
+                SourceExpression = col.SourceExpression ?? string.Empty,
+            });
+        }
+
+        if (columnRows.Count == 0)
+        {
+            columnRows.Add(new ColumnRow());
+            columnRows.Add(new ColumnRow());
+        }
     }
 
     private static string IdentityOptionsSuffix(TableMapping t)

@@ -1,10 +1,29 @@
+using Microsoft.EntityFrameworkCore;
+using Migrator.Api;
 using Migrator.Core;
+using Migrator.Infrastructure.Data.Registry;
 using Migrator.Infrastructure.Migration;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddOpenApi();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+    {
+        Title = "Migrator API",
+        Version = "v1",
+        Description = "Validación y ejecución de migraciones, metadatos de tablas/columnas y registro de planes (SQL Server, MySQL, Oracle, PostgreSQL → SQL Server).",
+    });
+});
 builder.Services.AddSingleton<IMigrationExecutor, SqlServerMigrationExecutor>();
+
+var registryCs = builder.Configuration.GetConnectionString("MigrationRegistry");
+if (!string.IsNullOrWhiteSpace(registryCs))
+{
+    builder.Services.AddDbContext<MigrationRegistryDbContext>(o =>
+        o.UseSqlServer(registryCs, sql => sql.CommandTimeout(60)));
+}
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -27,13 +46,21 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
+await InitializeMigrationRegistryAsync(app);
 
 app.UseHttpsRedirection();
 app.UseCors();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Migrator API v1");
+        options.DocumentTitle = "Migrator API — Swagger";
+        options.RoutePrefix = "swagger";
+    });
+}
 
 app.MapGet("/", () => Results.Content(
     """
@@ -49,7 +76,8 @@ app.MapGet("/", () => Results.Content(
       <p>La API está en marcha. No es una SPA: estas rutas sirven para comprobar que responde.</p>
       <ul>
         <li><a href="/health"><code>GET /health</code></a> — estado</li>
-        <li><a href="/openapi/v1.json"><code>GET /openapi/v1.json</code></a> — documento OpenAPI (solo desarrollo)</li>
+        <li><a href="/swagger"><code>/swagger</code></a> — Swagger UI (solo desarrollo)</li>
+        <li><a href="/swagger/v1/swagger.json"><code>GET /swagger/v1/swagger.json</code></a> — OpenAPI JSON</li>
       </ul>
       <p style="color:#555;font-size:0.9rem;">El resto de operaciones son <code>POST</code> bajo <code>/api/migration/…</code> (usa .http, Postman o el Blazor WASM).</p>
     </body>
@@ -167,6 +195,45 @@ app.MapPost("/api/migration/mysql/metadata/columns", async (
     })
     .WithName("MysqlMetadataColumns");
 
+app.MapPost("/api/migration/postgresql/metadata/tables", async (
+        PostgresqlMetadataTablesRequest request,
+        CancellationToken cancellationToken) =>
+    {
+        try
+        {
+            var cs = PostgreSqlConnectionStringFactory.Build(request.Connection);
+            var tables = await PostgreSqlSchemaMetadataReader.GetTablesAsync(cs, cancellationToken);
+            return Results.Json(new MetadataTablesResponse(tables));
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+    })
+    .WithName("PostgresqlMetadataTables");
+
+app.MapPost("/api/migration/postgresql/metadata/columns", async (
+        PostgresqlMetadataColumnsRequest request,
+        CancellationToken cancellationToken) =>
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request.Table))
+            {
+                return Results.BadRequest(new { error = "Indique el nombre calificado de la tabla (p. ej. esquema.tabla)." });
+            }
+
+            var cs = PostgreSqlConnectionStringFactory.Build(request.Connection);
+            var columns = await PostgreSqlSchemaMetadataReader.GetColumnsAsync(cs, request.Table.Trim(), cancellationToken);
+            return Results.Json(new MetadataColumnsResponse(columns));
+        }
+        catch (Exception ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+    })
+    .WithName("PostgresqlMetadataColumns");
+
 app.MapPost("/api/migration/oracle/metadata/tables", async (
         OracleMetadataTablesRequest request,
         CancellationToken cancellationToken) =>
@@ -183,6 +250,11 @@ app.MapPost("/api/migration/oracle/metadata/tables", async (
         }
     })
     .WithName("OracleMetadataTables");
+
+if (!string.IsNullOrWhiteSpace(registryCs))
+{
+    MigrationRegistryEndpoints.Map(app);
+}
 
 app.MapPost("/api/migration/oracle/metadata/columns", async (
         OracleMetadataColumnsRequest request,
@@ -207,5 +279,40 @@ app.MapPost("/api/migration/oracle/metadata/columns", async (
     .WithName("OracleMetadataColumns");
 
 app.Run();
+
+static async Task InitializeMigrationRegistryAsync(WebApplication app)
+{
+    var cs = app.Configuration.GetConnectionString("MigrationRegistry");
+    if (string.IsNullOrWhiteSpace(cs))
+    {
+        return;
+    }
+
+    try
+    {
+        await using var scope = app.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetService<MigrationRegistryDbContext>();
+        if (db is null)
+        {
+            return;
+        }
+
+        await db.Database.EnsureCreatedAsync();
+        await MigrationRegistrySchemaRepair.RepairAppStateIdentityColumnAsync(db);
+        if (!await db.AppState.AnyAsync(x => x.Id == 1))
+        {
+            db.AppState.Add(new RegistryAppStateEntity { Id = 1 });
+            await db.SaveChangesAsync();
+        }
+    }
+    catch (Exception ex)
+    {
+        var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("MigrationRegistry");
+        logger.LogWarning(
+            ex,
+            "No se pudo conectar o crear la base de registro (ConnectionStrings:MigrationRegistry). " +
+            "La API sigue activa; los endpoints /api/migration/registry/* fallarán hasta corregir la cadena o arrancar SQL Server.");
+    }
+}
 
 internal sealed record MigrationPlanValidationResponse(bool IsValid, IReadOnlyList<string> Errors);
