@@ -18,8 +18,9 @@ internal static class MigrationRegistryEndpoints
                 CancellationToken ct) =>
             {
                 var now = DateTimeOffset.UtcNow;
-                var (kind, ss, sd, ts, td) = MigrationRegistryMapper.SummarizeEndpoints(req.Plan);
-                var json = MigrationPlanJson.Serialize(req.Plan);
+                var plan = req.Plan;
+                var srcFp = RegistryEndpointFingerprint.OfSource(plan);
+                var tgtFp = RegistryEndpointFingerprint.OfTarget(plan);
 
                 RegistryWorkPlanEntity entity;
                 if (req.Id is { } existingId && existingId != Guid.Empty)
@@ -31,19 +32,29 @@ internal static class MigrationRegistryEndpoints
                     }
 
                     entity = found;
-                    if (!string.IsNullOrWhiteSpace(req.Name))
+                }
+                else if (req.MatchByEndpoints)
+                {
+                    var kind = (plan.SourceKind ?? "sqlServer").Trim();
+                    entity = await FindByEndpointsAsync(db, kind, srcFp, tgtFp, ct)
+                             ?? await FindByLegacyEndpointsAsync(
+                                 db,
+                                 kind,
+                                 plan.Source.Server,
+                                 plan.Source.Database,
+                                 plan.Target.Server,
+                                 plan.Target.Database,
+                                 ct);
+                    if (entity is null)
                     {
-                        entity.Name = req.Name.Trim();
+                        entity = new RegistryWorkPlanEntity
+                        {
+                            Id = Guid.NewGuid(),
+                            Name = string.IsNullOrWhiteSpace(req.Name) ? "Sin nombre" : req.Name.Trim(),
+                            CreatedAt = now,
+                        };
+                        db.WorkPlans.Add(entity);
                     }
-
-                    entity.SourceKind = kind;
-                    entity.SourceServer = ss;
-                    entity.SourceDatabase = sd;
-                    entity.TargetServer = ts;
-                    entity.TargetDatabase = td;
-                    entity.TableCount = req.Plan.Tables.Count;
-                    entity.PlanJson = json;
-                    entity.UpdatedAt = now;
                 }
                 else
                 {
@@ -51,17 +62,35 @@ internal static class MigrationRegistryEndpoints
                     {
                         Id = Guid.NewGuid(),
                         Name = string.IsNullOrWhiteSpace(req.Name) ? "Sin nombre" : req.Name.Trim(),
-                        SourceKind = kind,
-                        SourceServer = ss,
-                        SourceDatabase = sd,
-                        TargetServer = ts,
-                        TargetDatabase = td,
-                        TableCount = req.Plan.Tables.Count,
-                        PlanJson = json,
                         CreatedAt = now,
-                        UpdatedAt = now,
                     };
                     db.WorkPlans.Add(entity);
+                }
+
+                if (!string.IsNullOrWhiteSpace(req.Name))
+                {
+                    entity.Name = req.Name.Trim();
+                }
+
+                MigrationRegistryMapper.ApplyEndpointFields(entity, plan);
+                entity.SourceEndpointFingerprint = srcFp;
+                entity.TargetEndpointFingerprint = tgtFp;
+                if (!string.IsNullOrWhiteSpace(req.SourceConnectionId))
+                {
+                    entity.SourceConnectionId = req.SourceConnectionId.Trim();
+                }
+
+                if (!string.IsNullOrWhiteSpace(req.TargetConnectionId))
+                {
+                    entity.TargetConnectionId = req.TargetConnectionId.Trim();
+                }
+
+                entity.TableCount = plan.Tables.Count;
+                entity.PlanJson = MigrationPlanJson.Serialize(plan);
+                entity.UpdatedAt = now;
+                if (entity.CreatedAt == default)
+                {
+                    entity.CreatedAt = now;
                 }
 
                 await db.SaveChangesAsync(ct);
@@ -73,6 +102,45 @@ internal static class MigrationRegistryEndpoints
                 });
             })
             .WithName("RegistrySaveWorkPlan");
+
+        g.MapGet("/work-plans/match", async (
+                string sourceKind,
+                string sourceEndpointFingerprint,
+                string targetEndpointFingerprint,
+                string? sourceServer,
+                string? sourceDatabase,
+                string? targetServer,
+                string? targetDatabase,
+                MigrationRegistryDbContext db,
+                CancellationToken ct) =>
+            {
+                var kind = string.IsNullOrWhiteSpace(sourceKind) ? "sqlServer" : sourceKind.Trim();
+                var entity = await FindByEndpointsAsync(
+                    db,
+                    kind,
+                    sourceEndpointFingerprint.Trim(),
+                    targetEndpointFingerprint.Trim(),
+                    ct)
+                    ?? await FindByLegacyEndpointsAsync(
+                        db,
+                        kind,
+                        sourceServer,
+                        sourceDatabase,
+                        targetServer,
+                        targetDatabase,
+                        ct);
+                if (entity is null)
+                {
+                    return Results.Json(new RegistryWorkPlanMatchDto { Found = false });
+                }
+
+                return Results.Json(new RegistryWorkPlanMatchDto
+                {
+                    Found = true,
+                    Summary = MigrationRegistryMapper.ToSummaryDto(entity),
+                });
+            })
+            .WithName("RegistryMatchWorkPlan");
 
         g.MapGet("/work-plans", async (MigrationRegistryDbContext db, CancellationToken ct) =>
             {
@@ -140,6 +208,28 @@ internal static class MigrationRegistryEndpoints
             })
             .WithName("RegistryTableProgress");
 
+        g.MapGet("/work-plans/{id:guid}/execution-history", async (
+                Guid id,
+                int? limit,
+                MigrationRegistryDbContext db,
+                CancellationToken ct) =>
+            {
+                if (!await db.WorkPlans.AsNoTracking().AnyAsync(x => x.Id == id, ct))
+                {
+                    return Results.NotFound();
+                }
+
+                var take = limit is > 0 and <= 5000 ? limit.Value : 500;
+                var rows = await db.TableExecutionHistory
+                    .AsNoTracking()
+                    .Where(x => x.WorkPlanId == id)
+                    .OrderByDescending(x => x.ExecutedAt)
+                    .Take(take)
+                    .ToListAsync(ct);
+                return Results.Json(rows.Select(MigrationRegistryMapper.ToHistoryDto).ToList());
+            })
+            .WithName("RegistryExecutionHistory");
+
         g.MapGet("/last-executed", async (MigrationRegistryDbContext db, CancellationToken ct) =>
             {
                 var state = await db.AppState.AsNoTracking().FirstOrDefaultAsync(x => x.Id == 1, ct);
@@ -169,16 +259,22 @@ internal static class MigrationRegistryEndpoints
 
                 if (body.UpdatePlanSnapshot is not null)
                 {
-                    var p = body.UpdatePlanSnapshot;
-                    var (kind, ss, sd, ts, td) = MigrationRegistryMapper.SummarizeEndpoints(p);
-                    wp.SourceKind = kind;
-                    wp.SourceServer = ss;
-                    wp.SourceDatabase = sd;
-                    wp.TargetServer = ts;
-                    wp.TargetDatabase = td;
-                    wp.TableCount = p.Tables.Count;
-                    wp.PlanJson = MigrationPlanJson.Serialize(p);
+                    var stored = MigrationPlanJson.Deserialize(wp.PlanJson);
+                    var merged = RegistryPlanMerger.MergeIntoStored(stored, body.UpdatePlanSnapshot);
+                    MigrationRegistryMapper.ApplyEndpointFields(wp, merged);
+                    wp.TableCount = merged.Tables.Count;
+                    wp.PlanJson = MigrationPlanJson.Serialize(merged);
                     wp.UpdatedAt = now;
+                }
+
+                if (!string.IsNullOrWhiteSpace(body.SourceConnectionId))
+                {
+                    wp.SourceConnectionId = body.SourceConnectionId.Trim();
+                }
+
+                if (!string.IsNullOrWhiteSpace(body.TargetConnectionId))
+                {
+                    wp.TargetConnectionId = body.TargetConnectionId.Trim();
                 }
 
                 foreach (var row in summary.Tables ?? Array.Empty<TableMigrationResult>())
@@ -199,6 +295,19 @@ internal static class MigrationRegistryEndpoints
                             mappingJson = JsonSerializer.Serialize(tm, PlanPartJson.Options);
                         }
                     }
+
+                    db.TableExecutionHistory.Add(new RegistryTableExecutionHistoryEntity
+                    {
+                        WorkPlanId = body.WorkPlanId,
+                        SourceTable = row.Source,
+                        TargetTable = row.Target,
+                        DryRun = body.DryRun,
+                        Status = status,
+                        RowsRead = row.RowsRead,
+                        RowsAffected = row.RowsAffected,
+                        ExecutedAt = now,
+                        ErrorMessage = row.Error,
+                    });
 
                     var existing = await db.TableProgress.FirstOrDefaultAsync(
                         x => x.WorkPlanId == body.WorkPlanId
@@ -262,6 +371,57 @@ internal static class MigrationRegistryEndpoints
                 return Results.Ok();
             })
             .WithName("RegistryRecordExecution");
+    }
+
+    private static async Task<RegistryWorkPlanEntity?> FindByEndpointsAsync(
+        MigrationRegistryDbContext db,
+        string sourceKind,
+        string sourceEndpointFingerprint,
+        string targetEndpointFingerprint,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(sourceEndpointFingerprint)
+            || string.IsNullOrWhiteSpace(targetEndpointFingerprint))
+        {
+            return null;
+        }
+
+        return await db.WorkPlans
+            .OrderByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(
+                x => x.SourceKind == sourceKind
+                     && x.SourceEndpointFingerprint == sourceEndpointFingerprint
+                     && x.TargetEndpointFingerprint == targetEndpointFingerprint,
+                ct);
+    }
+
+    private static async Task<RegistryWorkPlanEntity?> FindByLegacyEndpointsAsync(
+        MigrationRegistryDbContext db,
+        string sourceKind,
+        string? sourceServer,
+        string? sourceDatabase,
+        string? targetServer,
+        string? targetDatabase,
+        CancellationToken ct)
+    {
+        var ss = sourceServer?.Trim() ?? string.Empty;
+        var sd = sourceDatabase?.Trim() ?? string.Empty;
+        var ts = targetServer?.Trim() ?? string.Empty;
+        var td = targetDatabase?.Trim() ?? string.Empty;
+        if (ss.Length == 0 || sd.Length == 0 || ts.Length == 0 || td.Length == 0)
+        {
+            return null;
+        }
+
+        return await db.WorkPlans
+            .OrderByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(
+                x => x.SourceKind == sourceKind
+                     && x.SourceServer == ss
+                     && x.SourceDatabase == sd
+                     && x.TargetServer == ts
+                     && x.TargetDatabase == td,
+                ct);
     }
 
     private static class PlanPartJson

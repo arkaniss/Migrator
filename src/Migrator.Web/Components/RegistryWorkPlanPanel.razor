@@ -1,0 +1,201 @@
+@using Migrator.Core
+@using Migrator.Web.Services
+
+<div class="card mb-4 border-secondary">
+    <div class="card-header fw-semibold">Registro de migraciones (origen @SourceKindLabel)</div>
+    <div class="card-body">
+        <p class="small text-muted mb-2">
+            Base de control en <code>ConnectionStrings:MigrationRegistry</code> de la API.
+            Al cargar origen y destino se <strong>vincula</strong> el trabajo por conexiones; cada dry-run o ejecución se guarda automáticamente.
+            En <strong>Último estado por tabla</strong>, pulsa una fila o <em>Cargar</em> para llevar el mapeo al plan y al borrador de arriba (todos los estados: completada, error, dry-run).
+            Colores en mapeos: <span class="text-success">completada</span>, <span class="text-danger">error</span>,
+            <span class="text-info">dry-run ok</span>, <span class="text-warning">dry-run fallo</span>.
+        </p>
+        @if (Host.LastExecuted is not null && Host.LastExecuted.WorkPlanId is not null)
+        {
+            <p class="small mb-2">
+                Último ejecutado en registro: <code>@Host.LastExecuted.WorkPlanId</code>
+                @if (Host.LastExecuted.ExecutedAt is not null)
+                {
+                    <span class="text-muted">· @Host.LastExecuted.ExecutedAt.Value.ToLocalTime().ToString("g")</span>
+                }
+            </p>
+        }
+        <div class="row g-2 align-items-end mb-3">
+            <div class="col-md-4">
+                <label class="form-label small mb-0">Trabajo activo</label>
+                <select class="form-select form-select-sm"
+                        value="@ActiveSelectValue"
+                        @onchange="OnSelectionChanged">
+                    <option value="">— Sin trabajo vinculado —</option>
+                    @foreach (var w in WorkPlansForPage)
+                    {
+                        <option value="@w.Id">@w.Name · @w.TableCount tablas · @w.UpdatedAt.ToLocalTime().ToString("g")</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small mb-0">Nombre al guardar</label>
+                <InputText class="form-control form-control-sm" @bind-Value="Host.WorkPlanName" placeholder="p. ej. Clientes fase 1" />
+            </div>
+            <div class="col-md-4 d-flex flex-wrap gap-2 align-items-end">
+                <button type="button" class="btn btn-primary btn-sm" @onclick="SavePlan" disabled="@(PlanTableCount == 0)">Guardar plan en registro (BD)</button>
+            </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2 mb-3">
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="Refresh">Actualizar lista</button>
+            <button type="button" class="btn btn-outline-primary btn-sm" @onclick="UseLastExecuted" disabled="@(Host.LastExecuted?.WorkPlanId is null)">Cargar último ejecutado</button>
+            <button type="button" class="btn btn-outline-primary btn-sm" @onclick="LoadActive" disabled="@(Host.ActiveWorkPlanId is null)">Cargar plan del trabajo activo (BD)</button>
+            <button type="button" class="btn btn-outline-danger btn-sm" @onclick="DeleteActive" disabled="@(Host.ActiveWorkPlanId is null)">Eliminar trabajo activo del registro</button>
+        </div>
+
+        @if (Host.ActiveWorkPlanId is not null)
+        {
+            <div class="row g-3">
+                <div class="col-lg-5">
+                    <h6 class="small fw-semibold mb-2">Último estado por tabla</h6>
+                    @if (Host.ProgressByPair.Count == 0)
+                    {
+                        <p class="text-muted small mb-0">Sin ejecuciones registradas aún para este trabajo.</p>
+                    }
+                    else
+                    {
+                        <div class="table-responsive" style="max-height: 260px; overflow-y: auto;">
+                            <table class="table table-sm table-striped mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th>Origen → Destino</th>
+                                        <th>Estado</th>
+                                        <th class="text-end">Filas</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var p in Host.ProgressByPair.Values.OrderBy(x => x.SourceTable))
+                                    {
+                                        var rowKey = RegistryMappingHost.PairKey(p.SourceTable, p.TargetTable);
+                                        var isSelected = string.Equals(_selectedProgressKey, rowKey, StringComparison.Ordinal);
+                                        <tr class="@(isSelected ? "table-primary" : "")"
+                                            style="cursor: pointer;"
+                                            title="Clic para cargar mapeo en el plan y borrador"
+                                            @onclick="() => LoadProgressRowAsync(p)">
+                                            <td class="small"><code>@p.SourceTable</code> → <code>@p.TargetTable</code></td>
+                                            <td class="small @RegistryMappingHost.CssForStatus(p.Status)">@RegistryMappingHost.StatusLabel(p.Status)</td>
+                                            <td class="small text-end text-muted">
+                                                @(p.RowsRead?.ToString() ?? "—") / @(p.RowsAffected?.ToString() ?? "—")
+                                            </td>
+                                            <td class="text-end" @onclick:stopPropagation="true">
+                                                <button type="button"
+                                                        class="btn btn-link btn-sm py-0"
+                                                        @onclick="() => LoadProgressRowAsync(p)">
+                                                    Cargar
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_selectedProgressLabel))
+                        {
+                            <p class="small text-muted mt-2 mb-0">Seleccionado: @_selectedProgressLabel</p>
+                        }
+                    }
+                </div>
+                <div class="col-lg-7">
+                    <h6 class="small fw-semibold mb-2">Historial de ejecuciones (@Host.ExecutionHistory.Count registros)</h6>
+                    @if (Host.ExecutionHistory.Count == 0)
+                    {
+                        <p class="text-muted small mb-0">El historial se irá llenando con cada dry-run o migración real.</p>
+                    }
+                    else
+                    {
+                        <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
+                            <table class="table table-sm table-hover mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th>Fecha</th>
+                                        <th>Tabla</th>
+                                        <th>Tipo</th>
+                                        <th>Estado</th>
+                                        <th class="text-end">Leídas</th>
+                                        <th class="text-end">Afectadas</th>
+                                        <th>Error</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var h in Host.ExecutionHistory)
+                                    {
+                                        <tr>
+                                            <td class="small text-nowrap">@h.ExecutedAt.ToLocalTime().ToString("g")</td>
+                                            <td class="small"><code>@h.SourceTable</code> → <code>@h.TargetTable</code></td>
+                                            <td class="small">@(h.DryRun ? "Dry-run" : "Real")</td>
+                                            <td class="small @RegistryMappingHost.CssForStatus(h.Status)">@RegistryMappingHost.StatusLabel(h.Status)</td>
+                                            <td class="small text-end">@(h.RowsRead?.ToString() ?? "—")</td>
+                                            <td class="small text-end">@(h.RowsAffected?.ToString() ?? "—")</td>
+                                            <td class="small text-danger">@(string.IsNullOrWhiteSpace(h.ErrorMessage) ? "" : h.ErrorMessage)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public RegistryMappingHost Host { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public MigrationPlan Plan { get; set; } = null!;
+
+    [Parameter, EditorRequired]
+    public string SourceKindLabel { get; set; } = string.Empty;
+
+    [Parameter]
+    public int PlanTableCount { get; set; }
+
+    [Parameter]
+    public EventCallback<RegistryTableProgressDto> OnLoadTableFromProgress { get; set; }
+
+    private string? _selectedProgressKey;
+    private string? _selectedProgressLabel;
+
+    private IEnumerable<RegistryWorkPlanSummaryDto> WorkPlansForPage =>
+        Host.WorkPlans.Where(Host.SummaryMatchesPage);
+
+    private string ActiveSelectValue => Host.ActiveWorkPlanId?.ToString() ?? string.Empty;
+
+    private Task Refresh() => Host.RefreshRemoteAsync();
+
+    private Task SavePlan() => Host.SavePlanAsync(Plan);
+
+    private Task LoadActive() => Host.LoadActivePlanAsync(Plan);
+
+    private Task UseLastExecuted() => Host.UseLastExecutedPlanAsync();
+
+    private Task DeleteActive() => Host.DeleteActiveAsync();
+
+    private Task OnSelectionChanged(ChangeEventArgs e)
+    {
+        _selectedProgressKey = null;
+        _selectedProgressLabel = null;
+        return Host.OnSelectionChangedAsync(e.Value?.ToString());
+    }
+
+    private async Task LoadProgressRowAsync(RegistryTableProgressDto progress)
+    {
+        _selectedProgressKey = RegistryMappingHost.PairKey(progress.SourceTable, progress.TargetTable);
+        _selectedProgressLabel =
+            $"{progress.SourceTable} → {progress.TargetTable} ({RegistryMappingHost.StatusLabel(progress.Status)})";
+
+        if (OnLoadTableFromProgress.HasDelegate)
+        {
+            await OnLoadTableFromProgress.InvokeAsync(progress);
+        }
+    }
+}

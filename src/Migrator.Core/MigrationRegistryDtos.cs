@@ -10,6 +10,22 @@ public sealed class SaveRegistryWorkPlanRequest
     public string Name { get; set; } = string.Empty;
 
     public MigrationPlan Plan { get; set; } = new();
+
+    /// <summary>Id de preset de conexión origen (localStorage), sin credenciales.</summary>
+    public string? SourceConnectionId { get; set; }
+
+    /// <summary>Id de preset de conexión destino (localStorage).</summary>
+    public string? TargetConnectionId { get; set; }
+
+    /// <summary>Si true y no hay <see cref="Id"/>, busca un trabajo existente por endpoints y lo actualiza.</summary>
+    public bool MatchByEndpoints { get; set; }
+}
+
+public sealed class RegistryWorkPlanMatchDto
+{
+    public bool Found { get; set; }
+
+    public RegistryWorkPlanSummaryDto? Summary { get; set; }
 }
 
 public sealed class SaveRegistryWorkPlanResponse
@@ -36,6 +52,10 @@ public sealed class RegistryWorkPlanSummaryDto
     public string TargetServer { get; set; } = string.Empty;
 
     public string TargetDatabase { get; set; } = string.Empty;
+
+    public string? SourceConnectionId { get; set; }
+
+    public string? TargetConnectionId { get; set; }
 
     public int TableCount { get; set; }
 
@@ -67,6 +87,31 @@ public sealed class RegistryTableProgressDto
     public DateTimeOffset? LastSuccessAt { get; set; }
 
     public string? ErrorMessage { get; set; }
+
+    /// <summary>Mapeo guardado en la última ejecución registrada (si existe en BD).</summary>
+    public TableMapping? Mapping { get; set; }
+}
+
+public sealed class RegistryTableExecutionHistoryDto
+{
+    public long Id { get; set; }
+
+    public string SourceTable { get; set; } = string.Empty;
+
+    public string TargetTable { get; set; } = string.Empty;
+
+    public bool DryRun { get; set; }
+
+    /// <summary>completed, failed, dryRunCompleted, dryRunFailed</summary>
+    public string Status { get; set; } = string.Empty;
+
+    public long? RowsRead { get; set; }
+
+    public long? RowsAffected { get; set; }
+
+    public DateTimeOffset ExecutedAt { get; set; }
+
+    public string? ErrorMessage { get; set; }
 }
 
 public sealed class RecordRegistryExecutionRequest
@@ -77,8 +122,12 @@ public sealed class RecordRegistryExecutionRequest
 
     public MigrationExecutionSummary Summary { get; set; } = new(false, Array.Empty<string>(), Array.Empty<TableMigrationResult>());
 
-    /// <summary>Plan completo actual en cliente; actualiza <c>PlanJson</c> del trabajo.</summary>
+    /// <summary>Plan actual en cliente; se fusiona con el guardado (no reemplaza tablas previas).</summary>
     public MigrationPlan? UpdatePlanSnapshot { get; set; }
+
+    public string? SourceConnectionId { get; set; }
+
+    public string? TargetConnectionId { get; set; }
 }
 
 public sealed record RegistryLastExecutedDto(

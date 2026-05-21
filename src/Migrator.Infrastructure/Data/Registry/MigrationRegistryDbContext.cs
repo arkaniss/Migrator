@@ -13,6 +13,8 @@ public sealed class MigrationRegistryDbContext : DbContext
 
     public DbSet<RegistryTableProgressEntity> TableProgress => Set<RegistryTableProgressEntity>();
 
+    public DbSet<RegistryTableExecutionHistoryEntity> TableExecutionHistory => Set<RegistryTableExecutionHistoryEntity>();
+
     public DbSet<RegistryAppStateEntity> AppState => Set<RegistryAppStateEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -27,7 +29,21 @@ public sealed class MigrationRegistryDbContext : DbContext
             e.Property(x => x.SourceDatabase).HasMaxLength(128);
             e.Property(x => x.TargetServer).HasMaxLength(256);
             e.Property(x => x.TargetDatabase).HasMaxLength(128);
+            e.Property(x => x.SourceEndpointFingerprint).HasMaxLength(512);
+            e.Property(x => x.TargetEndpointFingerprint).HasMaxLength(512);
+            e.Property(x => x.SourceConnectionId).HasMaxLength(64);
+            e.Property(x => x.TargetConnectionId).HasMaxLength(64);
+            e.HasIndex(x => new
+            {
+                x.SourceKind,
+                x.SourceEndpointFingerprint,
+                x.TargetEndpointFingerprint,
+            });
             e.HasMany(x => x.TableProgress)
+                .WithOne(x => x.WorkPlan!)
+                .HasForeignKey(x => x.WorkPlanId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.ExecutionHistory)
                 .WithOne(x => x.WorkPlan!)
                 .HasForeignKey(x => x.WorkPlanId)
                 .OnDelete(DeleteBehavior.Cascade);
@@ -41,6 +57,16 @@ public sealed class MigrationRegistryDbContext : DbContext
             e.Property(x => x.TargetTable).HasMaxLength(512);
             e.Property(x => x.Status).HasMaxLength(32);
             e.HasIndex(x => new { x.WorkPlanId, x.SourceTable, x.TargetTable }).IsUnique();
+        });
+
+        modelBuilder.Entity<RegistryTableExecutionHistoryEntity>(e =>
+        {
+            e.ToTable("RegistryTableExecutionHistory");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.SourceTable).HasMaxLength(512);
+            e.Property(x => x.TargetTable).HasMaxLength(512);
+            e.Property(x => x.Status).HasMaxLength(32);
+            e.HasIndex(x => new { x.WorkPlanId, x.ExecutedAt });
         });
 
         modelBuilder.Entity<RegistryAppStateEntity>(e =>

@@ -17,6 +17,18 @@ public sealed class RegistryWorkPlanEntity
 
     public string TargetDatabase { get; set; } = string.Empty;
 
+    /// <summary>Huella origen sin credenciales (ver <see cref="Migrator.Core.RegistryEndpointFingerprint"/>).</summary>
+    public string SourceEndpointFingerprint { get; set; } = string.Empty;
+
+    /// <summary>Huella destino sin credenciales.</summary>
+    public string TargetEndpointFingerprint { get; set; } = string.Empty;
+
+    /// <summary>Id de preset de conexión origen en el cliente (localStorage).</summary>
+    public string? SourceConnectionId { get; set; }
+
+    /// <summary>Id de preset de conexión destino en el cliente.</summary>
+    public string? TargetConnectionId { get; set; }
+
     public int TableCount { get; set; }
 
     public string PlanJson { get; set; } = "{}";
@@ -26,4 +38,7 @@ public sealed class RegistryWorkPlanEntity
     public DateTimeOffset UpdatedAt { get; set; }
 
     public ICollection<RegistryTableProgressEntity> TableProgress { get; set; } = new List<RegistryTableProgressEntity>();
+
+    public ICollection<RegistryTableExecutionHistoryEntity> ExecutionHistory { get; set; } =
+        new List<RegistryTableExecutionHistoryEntity>();
 }

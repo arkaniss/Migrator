@@ -299,6 +299,7 @@ static async Task InitializeMigrationRegistryAsync(WebApplication app)
 
         await db.Database.EnsureCreatedAsync();
         await MigrationRegistrySchemaRepair.RepairAppStateIdentityColumnAsync(db);
+        await MigrationRegistrySchemaRepair.RepairWorkPlanAndHistorySchemaAsync(db);
         if (!await db.AppState.AnyAsync(x => x.Id == 1))
         {
             db.AppState.Add(new RegistryAppStateEntity { Id = 1 });
