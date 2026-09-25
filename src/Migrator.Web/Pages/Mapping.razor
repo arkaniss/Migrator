@@ -9,9 +9,10 @@
 
 <PageTitle>Mapeo SQL Server</PageTitle>
 
+<div class="mapping-page-content">
 <h1>Mapeo SQL Server → SQL Server</h1>
 
-<p class="text-muted">
+<p class="text-muted text-break">
     Origen y destino son <strong>SQL Server</strong>. Configura conexiones, carga tablas/columnas vía <strong>Migrator.Api</strong> (<code>wwwroot/appsettings.json</code> → <code>MigratorApi</code>).
     Las <strong>conexiones usadas con éxito</strong> (cargar tablas, importar plan) se guardan en este navegador; puedes exportarlas a <code>conexiones.json</code> y volver a importarlas.
     Los snapshots y el estado de ejecución también usan <strong>localStorage</strong> (no sustituye un gestor de secretos en producción).
@@ -27,7 +28,7 @@
                     <option value="">— Elegir —</option>
                     @foreach (var s in SqlServerSavedConnections)
                     {
-                        <option value="@s.Id">@FormatSavedConnectionLabel(s)</option>
+                        <option value="@s.Id" title="@FormatSavedConnectionLabel(s)">@FormatSavedConnectionOptionLabel(s)</option>
                     }
                 </select>
                 <div class="input-group input-group-sm mb-2">
@@ -38,7 +39,7 @@
                 <button type="button" class="btn btn-outline-primary btn-sm mt-2" @onclick="LoadSourceTablesAsync">Cargar tablas</button>
                 @if (sourceLoadError is not null)
                 {
-                    <div class="text-danger small mt-2">@sourceLoadError</div>
+                    <div class="text-danger small mt-2 text-break migration-run-error">@sourceLoadError</div>
                 }
             </div>
         </div>
@@ -52,7 +53,7 @@
                     <option value="">— Elegir —</option>
                     @foreach (var s in SqlServerSavedConnections)
                     {
-                        <option value="@s.Id">@FormatSavedConnectionLabel(s)</option>
+                        <option value="@s.Id" title="@FormatSavedConnectionLabel(s)">@FormatSavedConnectionOptionLabel(s)</option>
                     }
                 </select>
                 <div class="input-group input-group-sm mb-2">
@@ -63,7 +64,7 @@
                 <button type="button" class="btn btn-outline-primary btn-sm mt-2" @onclick="LoadTargetTablesAsync">Cargar tablas</button>
                 @if (targetLoadError is not null)
                 {
-                    <div class="text-danger small mt-2">@targetLoadError</div>
+                    <div class="text-danger small mt-2 text-break migration-run-error">@targetLoadError</div>
                 }
             </div>
         </div>
@@ -92,16 +93,18 @@
                         <tr>
                             <td>@s.Name</td>
                             <td><span class="badge bg-secondary">@SavedConnectionKindLabel(s)</span></td>
-                            <td><code>@SavedConnectionServer(s)</code></td>
-                            <td><code>@SavedConnectionDatabase(s)</code></td>
-                            <td class="small">@s.LastUsedAt.ToLocalTime().ToString("g")</td>
-                            <td class="text-nowrap">
+                            <td class="text-break"><code>@SavedConnectionServer(s)</code></td>
+                            <td class="text-break"><code>@SavedConnectionDatabase(s)</code></td>
+                            <td class="small text-nowrap">@s.LastUsedAt.ToLocalTime().ToString("g")</td>
+                            <td>
+                                <div class="d-flex flex-wrap gap-1">
                                 @if (IsSqlServerSaved(s))
                                 {
                                     <button type="button" class="btn btn-link btn-sm py-0" @onclick="async () => await ApplyPresetToSourceAsync(s)">→ Origen</button>
                                     <button type="button" class="btn btn-link btn-sm py-0" @onclick="async () => await ApplyPresetToTargetAsync(s)">→ Destino</button>
                                 }
                                 <button type="button" class="btn btn-link btn-sm text-danger py-0" @onclick="async () => await DeleteSavedConnectionAsync(s.Id)">Quitar</button>
+                                </div>
                             </td>
                         </tr>
                     }
@@ -191,9 +194,9 @@
 </div>
 
 <div class="card mb-3">
-    <div class="card-body row g-3 mb-3">
-        <div class="row mb-2">
-            <div class="col-12 d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <div class="card-body g-3 mb-3">
+        <div class="mb-2">
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
                 <div>
                     <h3 class="h6 mt-3 mb-0">Mapeo de columnas</h3>
                     <p class="small text-muted mb-0">
@@ -204,7 +207,7 @@
                 <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AddColumnRow">+ Fila</button>
             </div>
         </div>
-        <div class="row small fw-semibold text-muted mb-1 d-none d-md-flex gx-2 border-bottom">
+        <div class="row small fw-semibold text-muted mb-1 d-none d-md-flex gx-2 border-bottom mx-0">
             <div class="col-md-3">Campo origen</div>
             <div class="col-md-4">Transformación SQL</div>
             <div class="col-md-3">Campo destino</div>
@@ -308,16 +311,16 @@ else
                         <span class="text-muted">→</span>
                         <span class="@(RegistryCssForMapping(t) ?? "")"><strong>@t.Target</strong></span>
                         <span class="badge bg-secondary ms-2">@t.Mode</span>
-                        <div class="small text-muted">@t.Columns.Count columnas · @(t.Columns.Count(c => !string.IsNullOrWhiteSpace(c.SourceExpression))) con transformación SQL · claves: @(t.KeyColumns.Count == 0 ? "—" : string.Join(", ", t.KeyColumns))@(IdentityOptionsSuffix(t))</div>
+                        <div class="small text-muted text-break">@t.Columns.Count columnas · @(t.Columns.Count(c => !string.IsNullOrWhiteSpace(c.SourceExpression))) con transformación SQL · claves: @(t.KeyColumns.Count == 0 ? "—" : string.Join(", ", t.KeyColumns))@(IdentityOptionsSuffix(t))</div>
                         <button type="button" class="btn btn-link btn-sm py-0" @onclick="() => EditTableInDraftAsync(t)">Editar en borrador</button>
                         @if (lastRunBySource.TryGetValue(t.Source, out var st))
                         {
-                            <div class="small @(st.Success ? "text-success" : "text-danger")">
+                            <div class="small text-break @(st.Success ? "text-success" : "text-danger")">
                                 Última ejecución: @(st.DryRun ? "dry-run" : "real") · @(st.Success ? "OK" : "Error")
                                 · @st.At.ToLocalTime().ToString("g")
                                 @if (!string.IsNullOrEmpty(st.Message))
                                 {
-                                    <span> — @st.Message</span>
+                                    <span class="migration-run-error"> — @st.Message</span>
                                 }
                             </div>
                         }
@@ -337,6 +340,7 @@ else
             <p class="small text-muted mb-2">
                 <strong>Dry-run</strong>: solo cuenta filas y valida conexión (no escribe). <strong>Real</strong>: modifica el destino según el modo de cada tabla.
                 Puedes enviar <strong>varias tablas en un solo POST</strong> (lote) o <strong>una petición por tabla</strong> (uno a uno).
+                Las tablas marcadas como <span class="text-success">completadas</span> en el registro <strong>sí se pueden volver a ejecutar</strong>; se mostrará una advertencia de confirmación.
             </p>
             <div class="d-flex flex-wrap gap-2">
                 <button type="button" class="btn btn-outline-info" @onclick="() => ExecuteBatchAsync(true)" disabled="@ExecuteDisabled">Dry-run (lote)</button>
@@ -402,8 +406,10 @@ else
 
 @if (!string.IsNullOrEmpty(statusMessage))
 {
-    <div class="alert alert-info mt-2" style="white-space: pre-wrap;">@statusMessage</div>
+    <div class="alert alert-info mt-2 text-break migration-run-error" style="white-space: pre-wrap;">@statusMessage</div>
 }
+
+</div>
 
 @code {
     private const string SnapshotsKey = "migrator.snapshots.v1";
@@ -713,6 +719,19 @@ else
         }
 
         return s.Name;
+    }
+
+    private static string FormatSavedConnectionOptionLabel(SavedConnectionEntry s) =>
+        TruncateForSelect(FormatSavedConnectionLabel(s), 72);
+
+    private static string TruncateForSelect(string text, int maxLength)
+    {
+        if (string.IsNullOrEmpty(text) || text.Length <= maxLength)
+        {
+            return text;
+        }
+
+        return text[..(maxLength - 1)] + "…";
     }
 
     private void UpsertMySqlConnectionFromUsage(MySqlConnectionInfo info, string? preferredName = null)
@@ -1110,15 +1129,20 @@ else
 
     private async Task ExecuteBatchAsync(bool dryRun)
     {
-        if (!dryRun && !await Js.InvokeAsync<bool>("confirm", "¿Ejecutar migración REAL en el destino para las tablas seleccionadas?"))
-        {
-            return;
-        }
-
         var tables = GetSelectedMappings();
         if (tables.Count == 0)
         {
             statusMessage = "Selecciona al menos una tabla en el plan.";
+            return;
+        }
+
+        if (!await MappingExecutionHelper.ConfirmExecutionAsync(
+                Js,
+                registry,
+                tables,
+                dryRun,
+                "¿Ejecutar migración REAL en el destino para las tablas seleccionadas?"))
+        {
             return;
         }
 
@@ -1128,15 +1152,20 @@ else
 
     private async Task ExecuteSequentialAsync(bool dryRun)
     {
-        if (!dryRun && !await Js.InvokeAsync<bool>("confirm", "¿Ejecutar migración REAL tabla por tabla en el destino?"))
-        {
-            return;
-        }
-
         var tables = GetSelectedMappings();
         if (tables.Count == 0)
         {
             statusMessage = "Selecciona al menos una tabla en el plan.";
+            return;
+        }
+
+        if (!await MappingExecutionHelper.ConfirmExecutionAsync(
+                Js,
+                registry,
+                tables,
+                dryRun,
+                "¿Ejecutar migración REAL tabla por tabla en el destino?"))
+        {
             return;
         }
 

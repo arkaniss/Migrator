@@ -187,6 +187,13 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             return new TableMigrationResult(table.Source, table.Target, rowsRead, 0, null);
         }
 
+        // DBCC CHECKIDENT (RESEED) es DDL: dentro de una transacción puede invalidarla si falla
+        // y dejar el SqlTransaction en estado "completado" para el resto de comandos.
+        if (table.ReseedToZero)
+        {
+            await TryReseedIdentityToZeroAsync(targetConn, table.Target, cancellationToken);
+        }
+
         await using var tx = (SqlTransaction)await targetConn.BeginTransactionAsync(cancellationToken);
 
         try
@@ -194,11 +201,6 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             if (IsTruncateReload(table.Mode))
             {
                 await TryTruncateTargetAsync(targetConn, tx, targetQualified, cancellationToken);
-            }
-
-            if (table.ReseedToZero)
-            {
-                await TryReseedIdentityToZeroAsync(targetConn, tx, table.Target, cancellationToken);
             }
 
             if (IsUpsert(table.Mode))
@@ -231,8 +233,20 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         }
         catch
         {
-            await tx.RollbackAsync(cancellationToken);
+            await TryRollbackAsync(tx, cancellationToken);
             throw;
+        }
+    }
+
+    private static async Task TryRollbackAsync(SqlTransaction tx, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await tx.RollbackAsync(cancellationToken);
+        }
+        catch (InvalidOperationException)
+        {
+            /* transacción ya confirmada o invalidada (p. ej. error previo en la misma tx) */
         }
     }
 
@@ -282,7 +296,6 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
 
     private static async Task TryReseedIdentityToZeroAsync(
         SqlConnection targetConn,
-        SqlTransaction tx,
         string targetQualifiedName,
         CancellationToken cancellationToken)
     {
@@ -296,7 +309,7 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             WHERE s.name = @schema AND t.name = @table;
             """;
 
-        await using (var check = new SqlCommand(hasIdentitySql, targetConn, tx) { CommandTimeout = 60 })
+        await using (var check = new SqlCommand(hasIdentitySql, targetConn) { CommandTimeout = 60 })
         {
             check.Parameters.AddWithValue("@schema", schema);
             check.Parameters.AddWithValue("@table", table);
@@ -307,17 +320,13 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             }
         }
 
-        var qualified = $"{schema}.{table}";
-        var sql = """
-            DECLARE @q sysname = @qualified;
-            DECLARE @stmt nvarchar(max) = N'DBCC CHECKIDENT(''' + @q + ''', RESEED, 1);';
-            EXEC(@stmt);
-            """;
-
+        var qualified = SqlIdentifier.Qualify(targetQualifiedName);
         try
         {
-            await using var cmd = new SqlCommand(sql, targetConn, tx) { CommandTimeout = 60 };
-            cmd.Parameters.AddWithValue("@qualified", qualified);
+            await using var cmd = new SqlCommand($"DBCC CHECKIDENT ({qualified}, RESEED, 1);", targetConn)
+            {
+                CommandTimeout = 60,
+            };
             await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
         catch (SqlException)
@@ -455,14 +464,25 @@ FROM {targetQualified};";
         {
             if (identityCol is not null)
             {
-                await using var offIdent = new SqlCommand(
-                    $"SET IDENTITY_INSERT {targetQualified} OFF;",
-                    targetConn,
-                    tx)
+                try
                 {
-                    CommandTimeout = 0,
-                };
-                await offIdent.ExecuteNonQueryAsync(cancellationToken);
+                    await using var offIdent = new SqlCommand(
+                        $"SET IDENTITY_INSERT {targetQualified} OFF;",
+                        targetConn,
+                        tx)
+                    {
+                        CommandTimeout = 0,
+                    };
+                    await offIdent.ExecuteNonQueryAsync(cancellationToken);
+                }
+                catch (SqlException)
+                {
+                    /* si MERGE falló, la transacción puede estar abortada */
+                }
+                catch (InvalidOperationException)
+                {
+                    /* transacción ya no válida */
+                }
             }
         }
 

@@ -337,6 +337,7 @@ else
             <p class="small text-muted mb-2">
                 <strong>Dry-run</strong>: solo cuenta filas y valida conexión (no escribe). <strong>Real</strong>: modifica el destino según el modo de cada tabla.
                 Puedes enviar <strong>varias tablas en un solo POST</strong> (lote) o <strong>una petición por tabla</strong> (uno a uno).
+                Las tablas marcadas como <span class="text-success">completadas</span> en el registro <strong>sí se pueden volver a ejecutar</strong>; se mostrará una advertencia de confirmación.
             </p>
             <div class="d-flex flex-wrap gap-2">
                 <button type="button" class="btn btn-outline-info" @onclick="() => ExecuteBatchAsync(true)" disabled="@ExecuteDisabled">Dry-run (lote)</button>
@@ -1118,15 +1119,20 @@ else
 
     private async Task ExecuteBatchAsync(bool dryRun)
     {
-        if (!dryRun && !await Js.InvokeAsync<bool>("confirm", "¿Ejecutar migración REAL en el destino para las tablas seleccionadas?"))
-        {
-            return;
-        }
-
         var tables = GetSelectedMappings();
         if (tables.Count == 0)
         {
             statusMessage = "Selecciona al menos una tabla en el plan.";
+            return;
+        }
+
+        if (!await MappingExecutionHelper.ConfirmExecutionAsync(
+                Js,
+                registry,
+                tables,
+                dryRun,
+                "¿Ejecutar migración REAL en el destino para las tablas seleccionadas?"))
+        {
             return;
         }
 
@@ -1136,15 +1142,20 @@ else
 
     private async Task ExecuteSequentialAsync(bool dryRun)
     {
-        if (!dryRun && !await Js.InvokeAsync<bool>("confirm", "¿Ejecutar migración REAL tabla por tabla en el destino?"))
-        {
-            return;
-        }
-
         var tables = GetSelectedMappings();
         if (tables.Count == 0)
         {
             statusMessage = "Selecciona al menos una tabla en el plan.";
+            return;
+        }
+
+        if (!await MappingExecutionHelper.ConfirmExecutionAsync(
+                Js,
+                registry,
+                tables,
+                dryRun,
+                "¿Ejecutar migración REAL tabla por tabla en el destino?"))
+        {
             return;
         }
 

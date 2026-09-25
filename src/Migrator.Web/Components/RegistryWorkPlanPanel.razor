@@ -79,7 +79,7 @@
                                             style="cursor: pointer;"
                                             title="Clic para cargar mapeo en el plan y borrador"
                                             @onclick="() => LoadProgressRowAsync(p)">
-                                            <td class="small"><code>@p.SourceTable</code> → <code>@p.TargetTable</code></td>
+                                            <td class="small text-break"><code>@p.SourceTable</code> → <code>@p.TargetTable</code></td>
                                             <td class="small @RegistryMappingHost.CssForStatus(p.Status)">@RegistryMappingHost.StatusLabel(p.Status)</td>
                                             <td class="small text-end text-muted">
                                                 @(p.RowsRead?.ToString() ?? "—") / @(p.RowsAffected?.ToString() ?? "—")
@@ -128,12 +128,12 @@
                                     {
                                         <tr>
                                             <td class="small text-nowrap">@h.ExecutedAt.ToLocalTime().ToString("g")</td>
-                                            <td class="small"><code>@h.SourceTable</code> → <code>@h.TargetTable</code></td>
+                                            <td class="small text-break"><code>@h.SourceTable</code> → <code>@h.TargetTable</code></td>
                                             <td class="small">@(h.DryRun ? "Dry-run" : "Real")</td>
                                             <td class="small @RegistryMappingHost.CssForStatus(h.Status)">@RegistryMappingHost.StatusLabel(h.Status)</td>
                                             <td class="small text-end">@(h.RowsRead?.ToString() ?? "—")</td>
                                             <td class="small text-end">@(h.RowsAffected?.ToString() ?? "—")</td>
-                                            <td class="small text-danger">@(string.IsNullOrWhiteSpace(h.ErrorMessage) ? "" : h.ErrorMessage)</td>
+                                            <td class="small text-danger text-break migration-run-error" style="max-width: 16rem;">@(string.IsNullOrWhiteSpace(h.ErrorMessage) ? "" : h.ErrorMessage)</td>
                                         </tr>
                                     }
                                 </tbody>
