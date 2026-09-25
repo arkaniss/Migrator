@@ -9,7 +9,7 @@ namespace Migrator.Core;
 /// </summary>
 public sealed class MigrationPlan
 {
-    /// <summary>Origen: <c>sqlServer</c> (por defecto), <c>mySql</c> u <c>oracle</c>.</summary>
+    /// <summary>Origen: <c>sqlServer</c> (por defecto), <c>mySql</c>, <c>oracle</c> o <c>postgresql</c>.</summary>
     public string SourceKind { get; set; } = "sqlServer";
 
     public SqlServerConnectionInfo Source { get; set; } = new();
@@ -20,6 +20,9 @@ public sealed class MigrationPlan
     /// <summary>Origen Oracle cuando <see cref="SourceKind"/> es <c>oracle</c>.</summary>
     public OracleConnectionInfo? OracleSource { get; set; }
 
+    /// <summary>Origen PostgreSQL cuando <see cref="SourceKind"/> es <c>postgresql</c>.</summary>
+    public PostgreSqlConnectionInfo? PostgreSqlSource { get; set; }
+
     public SqlServerConnectionInfo Target { get; set; } = new();
 
     public List<TableMapping> Tables { get; set; } = new();
@@ -29,6 +32,9 @@ public sealed class MigrationPlan
 
     public bool UsesOracleSource() =>
         string.Equals(SourceKind?.Trim(), "oracle", StringComparison.OrdinalIgnoreCase);
+
+    public bool UsesPostgresqlSource() =>
+        string.Equals(SourceKind?.Trim(), "postgresql", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class TableMapping
@@ -75,7 +81,7 @@ public sealed class ColumnMapping
     /// <summary>
     /// Fragmento SQL opcional usado en el SELECT del origen en lugar del nombre entre corchetes o backticks.
     /// Si <see cref="Source"/> está vacío, aquí va el fragmento completo (p. ej. literal <c>0</c> o <c>N'x'</c>).
-    /// Si hay <see cref="Source"/>, suele referenciar la tabla con el alias <c>s</c> (p. ej. SQL Server: <c>ISNULL(s.[col], 0)</c>; MySQL: <c>IFNULL(s.`col`,0)</c>; Oracle: identificador entre comillas dobles con prefijo <c>s.</c>).
+    /// Si hay <see cref="Source"/>, suele referenciar la tabla con el alias <c>s</c> (p. ej. SQL Server: <c>ISNULL(s.[col], 0)</c>; MySQL: <c>IFNULL(s.`col`,0)</c>; Oracle: identificador entre comillas dobles con prefijo <c>s.</c>; PostgreSQL: <c>COALESCE(s."col", …)</c>).
     /// </summary>
     public string? SourceExpression { get; set; }
 }

@@ -6,6 +6,12 @@
 
 main {
     flex: 1;
+    /* Permite que el contenido se encoja dentro del flex y no empuje la página en horizontal */
+    min-width: 0;
+}
+
+article.content {
+    max-width: 100%;
 }
 
 .sidebar {

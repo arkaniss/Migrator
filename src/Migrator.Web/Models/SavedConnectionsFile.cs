@@ -21,7 +21,7 @@ public sealed class SavedConnectionEntry
 
     public DateTimeOffset LastUsedAt { get; set; } = DateTimeOffset.UtcNow;
 
-    /// <summary><c>sqlServer</c>, <c>mySql</c> u <c>oracle</c>.</summary>
+    /// <summary><c>sqlServer</c>, <c>mySql</c>, <c>oracle</c> o <c>postgresql</c>.</summary>
     public string Kind { get; set; } = "sqlServer";
 
     /// <summary>Conexión SQL Server cuando <see cref="Kind"/> es <c>sqlServer</c> (nombre JSON histórico: connection).</summary>
@@ -33,6 +33,9 @@ public sealed class SavedConnectionEntry
 
     /// <summary>Conexión Oracle cuando <see cref="Kind"/> es <c>oracle</c>.</summary>
     public OracleConnectionInfo? Oracle { get; set; }
+
+    /// <summary>Conexión PostgreSQL cuando <see cref="Kind"/> es <c>postgresql</c>.</summary>
+    public PostgreSqlConnectionInfo? PostgreSql { get; set; }
 }
 
 public static class SavedConnectionFingerprint
@@ -62,5 +65,14 @@ public static class SavedConnectionFingerprint
         var svc = (c.ServiceName ?? string.Empty).Trim().ToLowerInvariant();
         var user = (c.UserId ?? string.Empty).Trim().ToLowerInvariant();
         return $"oracle|{server}|{port}|{svc}|{user}";
+    }
+
+    public static string Of(PostgreSqlConnectionInfo c)
+    {
+        var server = (c.Server ?? string.Empty).Trim().ToLowerInvariant();
+        var port = c.Port.ToString(CultureInfo.InvariantCulture);
+        var db = (c.Database ?? string.Empty).Trim().ToLowerInvariant();
+        var user = (c.UserId ?? string.Empty).Trim().ToLowerInvariant();
+        return $"postgresql|{server}|{port}|{db}|{user}";
     }
 }

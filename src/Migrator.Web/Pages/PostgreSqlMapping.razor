@@ -1,4 +1,4 @@
-@page "/mysql"
+@page "/postgresql"
 @using System.Net.Http.Json
 @using System.Text.Json
 @using Migrator.Core
@@ -6,12 +6,12 @@
 @inject IHttpClientFactory HttpFactory
 @inject IJSRuntime Js
 
-<PageTitle>Mapeo MySQL → SQL Server</PageTitle>
+<PageTitle>Mapeo PostgreSQL → SQL Server</PageTitle>
 
-<h1>Mapeo MySQL → SQL Server</h1>
+<h1>Mapeo PostgreSQL → SQL Server</h1>
 
 <p class="text-muted">
-    El <strong>origen</strong> es MySQL y el <strong>destino</strong> es SQL Server. Carga tablas/columnas vía <strong>Migrator.Api</strong> (<code>wwwroot/appsettings.json</code> → <code>MigratorApi</code>).
+    El <strong>origen</strong> es PostgreSQL y el <strong>destino</strong> es SQL Server. Carga tablas/columnas vía <strong>Migrator.Api</strong> (<code>wwwroot/appsettings.json</code> → <code>MigratorApi</code>).
     Las tablas de origen usan el formato <code>esquema.tabla</code> devuelto por el servidor. Las conexiones guardadas comparten biblioteca con la página SQL Server y se filtran por tipo.
     Los snapshots de esta página son independientes (otra clave en <strong>localStorage</strong>).
 </p>
@@ -24,7 +24,7 @@
                 <label class="form-label small mb-0">Aplicar conexión guardada</label>
                 <select class="form-select form-select-sm mb-2" @onchange="OnApplySourcePreset">
                     <option value="">— Elegir —</option>
-                    @foreach (var s in MySqlSavedConnections)
+                    @foreach (var s in PostgreSqlSavedConnections)
                     {
                         <option value="@s.Id">@FormatSavedConnectionLabel(s)</option>
                     }
@@ -33,7 +33,7 @@
                     <InputText class="form-control" @bind-Value="newPresetNameSource" placeholder="Nombre al guardar (opc.)" />
                     <button type="button" class="btn btn-outline-secondary" @onclick="SaveSourceAsPresetAsync">Guardar</button>
                 </div>
-                <MySqlConnectionFields Model="plan.MySqlSource!" />
+                <PostgreSqlConnectionFields Model="plan.PostgreSqlSource!" />
                 <button type="button" class="btn btn-outline-primary btn-sm mt-2" @onclick="LoadSourceTablesAsync">Cargar tablas</button>
                 @if (sourceLoadError is not null)
                 {
@@ -95,7 +95,7 @@
                             <td><code>@SavedConnectionDatabase(s)</code></td>
                             <td class="small">@s.LastUsedAt.ToLocalTime().ToString("g")</td>
                             <td class="text-nowrap">
-                                @if (IsMySqlSaved(s))
+                                @if (IsPostgreSqlSaved(s))
                                 {
                                     <button type="button" class="btn btn-link btn-sm py-0" @onclick="async () => await ApplyPresetToSourceAsync(s)">→ Origen</button>
                                 }
@@ -199,8 +199,8 @@
                 <div>
                     <h3 class="h6 mt-3 mb-0">Mapeo de columnas</h3>
                     <p class="small text-muted mb-0">
-                        La tabla origen usa el alias <code>s</code>. Sin transformación se usa <code>s.`columna`</code> (MySQL).
-                        También <code>IFNULL</code>, <code>COALESCE</code>, <code>CAST</code>, <code>CASE</code>, <code>CONVERT</code> (tipos MySQL), etc.
+                        La tabla origen usa el alias <code>s</code>. Sin transformación se usa <code>s."columna"</code> (PostgreSQL: identificador entre comillas dobles).
+                        También <code>COALESCE</code>, <code>NULLIF</code>, <code>CAST</code>, <code>CASE</code>, <code>to_char</code> / <code>::tipo</code>, etc.
                     </p>
                 </div>
                 <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AddColumnRow">+ Fila</button>
@@ -238,13 +238,12 @@
                     <label class="form-label small mb-0">Transformación (opcional)</label>
                     <InputTextArea class="form-control form-control-sm font-monospace" rows="1"
                                    @bind-Value="columnRows[index].SourceExpression"
-                                   placeholder="Ej: IFNULL(s.`fecha`, '1900-01-01')&#10;CAST(s.`fecha` AS CHAR(23))&#10;CASE WHEN s.`activo`=1 THEN 'Sí' ELSE 'No' END" />
+                                   placeholder="Ej: COALESCE(s.&quot;fecha&quot;, TIMESTAMP '1970-01-01')&#10;CAST(s.&quot;codigo&quot; AS VARCHAR(50))&#10;CASE WHEN s.&quot;activo&quot; THEN 'Sí' ELSE 'No' END" />
                     <div class="btn-group btn-group-sm mt-1 flex-wrap" role="group">
-                        <button type="button" class="btn btn-outline-secondary" title="Plantilla IFNULL" @onclick="() => ApplyIsNullTemplate(index)">IFNULL</button>
-                        <button type="button" class="btn btn-outline-secondary" title="CAST a CHAR" @onclick="() => ApplyConvertVarcharTemplate(index)">CAST</button>
+                        <button type="button" class="btn btn-outline-secondary" title="COALESCE (equivalente a IFNULL)" @onclick="() => ApplyCoalesceTemplate(index)">COALESCE</button>
+                        <button type="button" class="btn btn-outline-secondary" title="CAST a VARCHAR" @onclick="() => ApplyConvertVarcharTemplate(index)">CAST</button>
                         <button type="button" class="btn btn-outline-secondary" title="CASE WHEN simple" @onclick="() => ApplyCaseTemplate(index)">CASE</button>
-                        <button type="button" class="btn btn-outline-secondary" title="COALESCE con segunda columna (edita)" @onclick="() => ApplyCoalesceTemplate(index)">COALESCE</button>
-                        <button type="button" class="btn btn-outline-secondary" title="Fecha y hora actuales (NOW() en MySQL)" @onclick="() => ApplyGetDateTemplate(index)">NOW</button>
+                        <button type="button" class="btn btn-outline-secondary" title="Fecha y hora actuales (transaction_timestamp / NOW)" @onclick="() => ApplyGetDateTemplate(index)">NOW</button>
                     </div>
                 </div>
                 <div class="col-12 col-md-3">
@@ -353,7 +352,7 @@ else
     </div>
 }
 
-<RegistryWorkPlanPanel Host="registry" Plan="plan" PlanTableCount="plan.Tables.Count" SourceKindLabel="MySQL"
+<RegistryWorkPlanPanel Host="registry" Plan="plan" PlanTableCount="plan.Tables.Count" SourceKindLabel="PostgreSQL"
                      OnLoadTableFromProgress="OnLoadTableFromRegistryProgressAsync" />
 
 <div class="card mb-4">
@@ -408,11 +407,11 @@ else
 }
 
 @code {
-    private const string SnapshotsKey = "migrator.mysql.snapshots.v1";
-    private const string RunStateKey = "migrator.mysql.runstate.v1";
+    private const string SnapshotsKey = "migrator.postgresql.snapshots.v1";
+    private const string RunStateKey = "migrator.postgresql.runstate.v1";
     private const string SavedConnectionsKey = "migrator.savedConnections.v1";
-    private const string RegistryWorkPlanIdKey = "migrator.registryActiveWorkPlanId.v1.mySql";
-    private const string RegistryPageExpectedSourceKind = "mySql";
+    private const string RegistryWorkPlanIdKey = "migrator.registryActiveWorkPlanId.v1.postgresql";
+    private const string RegistryPageExpectedSourceKind = "postgresql";
 
     private static readonly JsonSerializerOptions JsonRead = new() { PropertyNameCaseInsensitive = true };
     private static readonly JsonSerializerOptions JsonWrite = new() { WriteIndented = false };
@@ -421,19 +420,19 @@ else
 
     private readonly MigrationPlan plan = new()
     {
-        SourceKind = "mySql",
-        MySqlSource = new MySqlConnectionInfo(),
+        SourceKind = "postgresql",
+        PostgreSqlSource = new PostgreSqlConnectionInfo(),
         Source = new SqlServerConnectionInfo(),
     };
 
-    private IEnumerable<SavedConnectionEntry> MySqlSavedConnections =>
-        savedConnections.Where(IsMySqlSaved).OrderByDescending(x => x.LastUsedAt);
+    private IEnumerable<SavedConnectionEntry> PostgreSqlSavedConnections =>
+        savedConnections.Where(IsPostgreSqlSaved).OrderByDescending(x => x.LastUsedAt);
 
     private IEnumerable<SavedConnectionEntry> SqlServerSavedConnections =>
         savedConnections.Where(IsSqlServerSaved).OrderByDescending(x => x.LastUsedAt);
 
-    private static bool IsMySqlSaved(SavedConnectionEntry x) =>
-        string.Equals(x.Kind, "mySql", StringComparison.OrdinalIgnoreCase);
+    private static bool IsPostgreSqlSaved(SavedConnectionEntry x) =>
+        string.Equals(x.Kind, "postgresql", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsSqlServerSaved(SavedConnectionEntry x) =>
         string.Equals(x.Kind, "sqlServer", StringComparison.OrdinalIgnoreCase);
@@ -542,12 +541,12 @@ else
     private async Task ApplyRegistryPlanDetailAsync(RegistryWorkPlanDetailDto detail)
     {
         var p = MigrationPlanJson.Deserialize(MigrationPlanJson.Serialize(detail.Plan));
-        plan.SourceKind = "mySql";
-        plan.MySqlSource = p.MySqlSource is null ? new MySqlConnectionInfo() : CloneMySql(p.MySqlSource);
+        plan.SourceKind = "postgresql";
+        plan.PostgreSqlSource = p.PostgreSqlSource is null ? new PostgreSqlConnectionInfo() : ClonePostgreSql(p.PostgreSqlSource);
         plan.Source = p.Source ?? new SqlServerConnectionInfo();
         plan.Target = p.Target ?? new SqlServerConnectionInfo();
+        plan.MySqlSource = null;
         plan.OracleSource = null;
-        plan.PostgreSqlSource = null;
         plan.Tables.Clear();
         plan.Tables.AddRange(p.Tables);
         registry.SourceConnectionId = detail.Summary.SourceConnectionId ?? activeSourceConnectionId;
@@ -719,11 +718,68 @@ else
         return s.Name;
     }
 
-    private string? UpsertMySqlConnectionFromUsage(MySqlConnectionInfo info, string? preferredName = null)
+    private string? UpsertPostgreSqlConnectionFromUsage(PostgreSqlConnectionInfo info, string? preferredName = null)
     {
         if (string.IsNullOrWhiteSpace(info.Server) || string.IsNullOrWhiteSpace(info.Database))
         {
             return null;
+        }
+
+        var fp = SavedConnectionFingerprint.Of(info);
+        var existing = savedConnections.FirstOrDefault(x =>
+            IsPostgreSqlSaved(x)
+            && x.PostgreSql is not null
+            && SavedConnectionFingerprint.Of(x.PostgreSql) == fp);
+
+        if (existing is not null)
+        {
+            existing.Kind = "postgresql";
+            existing.PostgreSql = ClonePostgreSql(info);
+            existing.Connection = null;
+            existing.MySql = null;
+            existing.Oracle = null;
+            existing.LastUsedAt = DateTimeOffset.UtcNow;
+            if (!string.IsNullOrWhiteSpace(preferredName))
+            {
+                existing.Name = preferredName.Trim();
+            }
+
+            return existing.Id;
+        }
+
+        var name = !string.IsNullOrWhiteSpace(preferredName)
+            ? preferredName!.Trim()
+            : $"{info.Server.Trim()}:{info.Port} · {info.Database.Trim()}";
+
+        var entry = new SavedConnectionEntry
+        {
+            Kind = "postgresql",
+            Name = name,
+            Connection = null,
+            MySql = null,
+            Oracle = null,
+            PostgreSql = ClonePostgreSql(info),
+            LastUsedAt = DateTimeOffset.UtcNow,
+        };
+        savedConnections.Add(entry);
+        return entry.Id;
+    }
+
+    private static PostgreSqlConnectionInfo ClonePostgreSql(PostgreSqlConnectionInfo c) =>
+        new()
+        {
+            Server = c.Server,
+            Port = c.Port is >= 1 and <= 65535 ? c.Port : 5432,
+            Database = c.Database,
+            UserId = c.UserId,
+            Password = c.Password,
+        };
+
+    private void UpsertMySqlConnectionFromUsage(MySqlConnectionInfo info, string? preferredName = null)
+    {
+        if (string.IsNullOrWhiteSpace(info.Server) || string.IsNullOrWhiteSpace(info.Database))
+        {
+            return;
         }
 
         var fp = SavedConnectionFingerprint.Of(info);
@@ -745,63 +801,6 @@ else
                 existing.Name = preferredName.Trim();
             }
 
-            return existing.Id;
-        }
-
-        var name = !string.IsNullOrWhiteSpace(preferredName)
-            ? preferredName!.Trim()
-            : $"{info.Server.Trim()}:{info.Port} · {info.Database.Trim()}";
-
-        var entry = new SavedConnectionEntry
-        {
-            Kind = "mySql",
-            Name = name,
-            Connection = null,
-            MySql = CloneMySql(info),
-            Oracle = null,
-            PostgreSql = null,
-            LastUsedAt = DateTimeOffset.UtcNow,
-        };
-        savedConnections.Add(entry);
-        return entry.Id;
-    }
-
-    private static MySqlConnectionInfo CloneMySql(MySqlConnectionInfo c) =>
-        new()
-        {
-            Server = c.Server,
-            Port = c.Port is >= 1 and <= 65535 ? c.Port : 3306,
-            Database = c.Database,
-            UserId = c.UserId,
-            Password = c.Password,
-        };
-
-    private void UpsertPostgreSqlConnectionFromUsage(PostgreSqlConnectionInfo info, string? preferredName = null)
-    {
-        if (string.IsNullOrWhiteSpace(info.Server) || string.IsNullOrWhiteSpace(info.Database))
-        {
-            return;
-        }
-
-        var fp = SavedConnectionFingerprint.Of(info);
-        var existing = savedConnections.FirstOrDefault(x =>
-            string.Equals(x.Kind, "postgresql", StringComparison.OrdinalIgnoreCase)
-            && x.PostgreSql is not null
-            && SavedConnectionFingerprint.Of(x.PostgreSql) == fp);
-
-        if (existing is not null)
-        {
-            existing.Kind = "postgresql";
-            existing.PostgreSql = ClonePostgreSql(info);
-            existing.Connection = null;
-            existing.MySql = null;
-            existing.Oracle = null;
-            existing.LastUsedAt = DateTimeOffset.UtcNow;
-            if (!string.IsNullOrWhiteSpace(preferredName))
-            {
-                existing.Name = preferredName.Trim();
-            }
-
             return;
         }
 
@@ -811,21 +810,21 @@ else
 
         savedConnections.Add(new SavedConnectionEntry
         {
-            Kind = "postgresql",
+            Kind = "mySql",
             Name = name,
             Connection = null,
-            MySql = null,
+            MySql = CloneMySql(info),
             Oracle = null,
-            PostgreSql = ClonePostgreSql(info),
+            PostgreSql = null,
             LastUsedAt = DateTimeOffset.UtcNow,
         });
     }
 
-    private static PostgreSqlConnectionInfo ClonePostgreSql(PostgreSqlConnectionInfo c) =>
+    private static MySqlConnectionInfo CloneMySql(MySqlConnectionInfo c) =>
         new()
         {
             Server = c.Server,
-            Port = c.Port is >= 1 and <= 65535 ? c.Port : 5432,
+            Port = c.Port is >= 1 and <= 65535 ? c.Port : 3306,
             Database = c.Database,
             UserId = c.UserId,
             Password = c.Password,
@@ -900,12 +899,12 @@ else
         }
 
         var entry = savedConnections.FirstOrDefault(x => x.Id == id);
-        if (entry is null || entry.MySql is null)
+        if (entry is null || entry.PostgreSql is null)
         {
             return;
         }
 
-        plan.MySqlSource = CloneMySql(entry.MySql);
+        plan.PostgreSqlSource = ClonePostgreSql(entry.PostgreSql);
         activeSourceConnectionId = entry.Id;
         registry.SourceConnectionId = entry.Id;
         entry.LastUsedAt = DateTimeOffset.UtcNow;
@@ -937,17 +936,17 @@ else
 
     private async Task SaveSourceAsPresetAsync()
     {
-        var m = plan.MySqlSource;
+        var m = plan.PostgreSqlSource;
         if (m is null
             || string.IsNullOrWhiteSpace(m.Server)
             || string.IsNullOrWhiteSpace(m.Database)
             || string.IsNullOrWhiteSpace(m.UserId))
         {
-            statusMessage = "Indica host, base de datos y usuario MySQL antes de guardar.";
+            statusMessage = "Indica host, base de datos y usuario PostgreSQL antes de guardar.";
             return;
         }
 
-        activeSourceConnectionId = UpsertMySqlConnectionFromUsage(m, string.IsNullOrWhiteSpace(newPresetNameSource) ? null : newPresetNameSource.Trim());
+        activeSourceConnectionId = UpsertPostgreSqlConnectionFromUsage(m, string.IsNullOrWhiteSpace(newPresetNameSource) ? null : newPresetNameSource.Trim());
         registry.SourceConnectionId = activeSourceConnectionId;
         newPresetNameSource = string.Empty;
         await PersistSavedConnectionsAsync();
@@ -971,12 +970,12 @@ else
 
     private async Task ApplyPresetToSourceAsync(SavedConnectionEntry s)
     {
-        if (s.MySql is null)
+        if (s.PostgreSql is null)
         {
             return;
         }
 
-        plan.MySqlSource = CloneMySql(s.MySql);
+        plan.PostgreSqlSource = ClonePostgreSql(s.PostgreSql);
         activeSourceConnectionId = s.Id;
         registry.SourceConnectionId = s.Id;
         s.LastUsedAt = DateTimeOffset.UtcNow;
@@ -1204,8 +1203,8 @@ else
     private MigrationPlan ClonePlanSubset(List<TableMapping> tables) =>
         new()
         {
-            SourceKind = "mySql",
-            MySqlSource = plan.MySqlSource is null ? new MySqlConnectionInfo() : CloneMySql(plan.MySqlSource),
+            SourceKind = "postgresql",
+            PostgreSqlSource = plan.PostgreSqlSource is null ? new PostgreSqlConnectionInfo() : ClonePostgreSql(plan.PostgreSqlSource),
             Source = new SqlServerConnectionInfo(),
             Target = CloneConn(plan.Target),
             Tables = tables.Select(t => new TableMapping
@@ -1346,8 +1345,8 @@ else
         }
 
         var clone = MigrationPlanJson.Deserialize(MigrationPlanJson.Serialize(s.Plan));
-        plan.SourceKind = "mySql";
-        plan.MySqlSource = clone.MySqlSource is null ? new MySqlConnectionInfo() : CloneMySql(clone.MySqlSource);
+        plan.SourceKind = "postgresql";
+        plan.PostgreSqlSource = clone.PostgreSqlSource is null ? new PostgreSqlConnectionInfo() : ClonePostgreSql(clone.PostgreSqlSource);
         plan.Source = clone.Source ?? new SqlServerConnectionInfo();
         plan.Target = clone.Target ?? new SqlServerConnectionInfo();
         plan.Tables.Clear();
@@ -1381,18 +1380,18 @@ else
     private async Task LoadSourceTablesAsync()
     {
         sourceLoadError = null;
-        if (plan.MySqlSource is null)
+        if (plan.PostgreSqlSource is null)
         {
-            sourceLoadError = "No hay datos de conexión MySQL.";
+            sourceLoadError = "No hay datos de conexión PostgreSQL.";
             return;
         }
 
-        var (tables, err) = await FetchMySqlTablesAsync(plan.MySqlSource);
+        var (tables, err) = await FetchPostgreSqlTablesAsync(plan.PostgreSqlSource);
         sourceTables = tables;
         sourceLoadError = err;
         if (err is null)
         {
-            activeSourceConnectionId = UpsertMySqlConnectionFromUsage(plan.MySqlSource);
+            activeSourceConnectionId = UpsertPostgreSqlConnectionFromUsage(plan.PostgreSqlSource);
             registry.SourceConnectionId = activeSourceConnectionId;
             await PersistSavedConnectionsAsync();
             registry.NotifySourceTablesLoaded(sourceTables.Count > 0);
@@ -1438,14 +1437,14 @@ else
         }
     }
 
-    private async Task<(List<SchemaTableDto> Tables, string? Error)> FetchMySqlTablesAsync(MySqlConnectionInfo connection)
+    private async Task<(List<SchemaTableDto> Tables, string? Error)> FetchPostgreSqlTablesAsync(PostgreSqlConnectionInfo connection)
     {
         try
         {
             var client = HttpFactory.CreateClient("MigratorApi");
             var response = await client.PostAsJsonAsync(
-                "api/migration/mysql/metadata/tables",
-                new MysqlMetadataTablesRequest(connection));
+                "api/migration/postgresql/metadata/tables",
+                new PostgresqlMetadataTablesRequest(connection));
             if (!response.IsSuccessStatusCode)
             {
                 return (new List<SchemaTableDto>(), await response.Content.ReadAsStringAsync());
@@ -1472,9 +1471,9 @@ else
             return;
         }
 
-        if (plan.MySqlSource is null)
+        if (plan.PostgreSqlSource is null)
         {
-            statusMessage = "Configura la conexión MySQL de origen.";
+            statusMessage = "Configura la conexión PostgreSQL de origen.";
             return;
         }
 
@@ -1482,8 +1481,8 @@ else
         {
             var client = HttpFactory.CreateClient("MigratorApi");
             var srcResp = await client.PostAsJsonAsync(
-                "api/migration/mysql/metadata/columns",
-                new MysqlMetadataColumnsRequest(plan.MySqlSource!, draftSource));
+                "api/migration/postgresql/metadata/columns",
+                new PostgresqlMetadataColumnsRequest(plan.PostgreSqlSource!, draftSource));
 
             if (!srcResp.IsSuccessStatusCode)
             {
@@ -1538,21 +1537,7 @@ else
         }
 
         statusMessage =
-            "Mapeo sugerido: una fila por columna destino (orden de inserción). Origen vacío si no hay homónima en MySQL; rellena la transformación con un literal o expresión.";
-    }
-
-    private void ApplyIsNullTemplate(int index)
-    {
-        var c = columnRows[index].Source.Trim();
-        if (string.IsNullOrEmpty(c))
-        {
-            statusMessage = "Elige o escribe primero la columna origen.";
-            return;
-        }
-
-        var b = BacktickIdentifier(c);
-        columnRows[index].SourceExpression = $"IFNULL(s.{b}, '')";
-        statusMessage = "Plantilla IFNULL aplicada (ajusta el valor por defecto).";
+            "Mapeo sugerido: una fila por columna destino (orden de inserción). Origen vacío si no hay homónima en PostgreSQL; rellena la transformación con un literal o expresión.";
     }
 
     private void ApplyConvertVarcharTemplate(int index)
@@ -1564,8 +1549,8 @@ else
             return;
         }
 
-        var b = BacktickIdentifier(c);
-        columnRows[index].SourceExpression = $"CAST(s.{b} AS CHAR(50))";
+        var b = PgQuoteIdentifier(c);
+        columnRows[index].SourceExpression = $"CAST(s.{b} AS VARCHAR(50))";
         statusMessage = "Plantilla CAST aplicada (ajusta tipo y longitud).";
     }
 
@@ -1578,7 +1563,7 @@ else
             return;
         }
 
-        var b = BacktickIdentifier(c);
+        var b = PgQuoteIdentifier(c);
         columnRows[index].SourceExpression = $"CASE WHEN s.{b} = 1 THEN 'Sí' ELSE 'No' END";
         statusMessage = "Plantilla CASE aplicada (ajusta condición y valores).";
     }
@@ -1592,7 +1577,7 @@ else
             return;
         }
 
-        var b = BacktickIdentifier(c);
+        var b = PgQuoteIdentifier(c);
         columnRows[index].SourceExpression = $"COALESCE(s.{b}, '')";
         statusMessage = "Plantilla COALESCE: añade otra columna o literal como segundo argumento.";
     }
@@ -1600,11 +1585,11 @@ else
     private void ApplyGetDateTemplate(int index)
     {
         columnRows[index].SourceExpression = "NOW()";
-        statusMessage = "Plantilla NOW() aplicada (fecha y hora actuales en MySQL).";
+        statusMessage = "Plantilla NOW() aplicada (fecha y hora actuales en PostgreSQL).";
     }
 
-    private static string BacktickIdentifier(string name) =>
-        "`" + name.Replace("`", "``", StringComparison.Ordinal) + "`";
+    private static string PgQuoteIdentifier(string name) =>
+        "\"" + name.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 
     private void AddColumnRow() => columnRows.Add(new ColumnRow());
 
@@ -1719,7 +1704,7 @@ else
     {
         statusMessage = null;
         var json = MigrationPlanJson.Serialize(plan);
-        await Js.InvokeVoidAsync("downloadTextFile", "mapeo-mysql.json", json);
+        await Js.InvokeVoidAsync("downloadTextFile", "mapeo-postgresql.json", json);
     }
 
     private async Task OnImportJson(InputFileChangeEventArgs e)
@@ -1742,20 +1727,20 @@ else
             return;
         }
 
-        if (imported.UsesPostgresqlSource())
+        if (imported.UsesMySqlSource())
         {
-            statusMessage = "Este archivo es de migración PostgreSQL → SQL Server. Ábrelo desde el menú PostgreSQL.";
+            statusMessage = "Este archivo es de migración MySQL → SQL Server. Ábrelo desde el menú MySQL.";
             return;
         }
 
-        if (!imported.UsesMySqlSource())
+        if (!imported.UsesPostgresqlSource())
         {
-            statusMessage = "Este archivo es de migración solo SQL Server → SQL Server. Ábrelo desde el menú SQL Server.";
+            statusMessage = "Este JSON no es un plan PostgreSQL → SQL Server (sourceKind postgresql). Usa SQL Server, MySQL u Oracle para otros orígenes.";
             return;
         }
 
-        plan.SourceKind = "mySql";
-        plan.MySqlSource = imported.MySqlSource is null ? new MySqlConnectionInfo() : CloneMySql(imported.MySqlSource);
+        plan.SourceKind = "postgresql";
+        plan.PostgreSqlSource = imported.PostgreSqlSource is null ? new PostgreSqlConnectionInfo() : ClonePostgreSql(imported.PostgreSqlSource);
         plan.Source = imported.Source ?? new SqlServerConnectionInfo();
         plan.Target = imported.Target ?? new SqlServerConnectionInfo();
         plan.Tables.Clear();
@@ -1774,7 +1759,7 @@ else
         sourceLoadError = null;
         targetLoadError = null;
 
-        UpsertMySqlConnectionFromUsage(plan.MySqlSource);
+        UpsertPostgreSqlConnectionFromUsage(plan.PostgreSqlSource);
         UpsertConnectionFromUsage(plan.Target);
         await PersistSavedConnectionsAsync();
 
@@ -1817,7 +1802,7 @@ else
         RegistryProgressTableLoader.MergeIntoPlan(mapping, plan);
         selectedForRun.Add(mapping.Source);
         ApplyDraftFromTableMapping(mapping);
-        if (plan.MySqlSource is not null
+        if (plan.PostgreSqlSource is not null
             && !string.IsNullOrWhiteSpace(plan.Target.Server)
             && !string.IsNullOrWhiteSpace(draftSource)
             && !string.IsNullOrWhiteSpace(draftTarget))

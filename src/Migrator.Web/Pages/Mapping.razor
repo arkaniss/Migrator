@@ -3,14 +3,16 @@
 @using System.Text.Json
 @using Migrator.Core
 @using Migrator.Web.Models
+@using Migrator.Web.Services
 @inject IHttpClientFactory HttpFactory
 @inject IJSRuntime Js
 
 <PageTitle>Mapeo SQL Server</PageTitle>
 
+<div class="mapping-page-content">
 <h1>Mapeo SQL Server → SQL Server</h1>
 
-<p class="text-muted">
+<p class="text-muted text-break">
     Origen y destino son <strong>SQL Server</strong>. Configura conexiones, carga tablas/columnas vía <strong>Migrator.Api</strong> (<code>wwwroot/appsettings.json</code> → <code>MigratorApi</code>).
     Las <strong>conexiones usadas con éxito</strong> (cargar tablas, importar plan) se guardan en este navegador; puedes exportarlas a <code>conexiones.json</code> y volver a importarlas.
     Los snapshots y el estado de ejecución también usan <strong>localStorage</strong> (no sustituye un gestor de secretos en producción).
@@ -26,7 +28,7 @@
                     <option value="">— Elegir —</option>
                     @foreach (var s in SqlServerSavedConnections)
                     {
-                        <option value="@s.Id">@FormatSavedConnectionLabel(s)</option>
+                        <option value="@s.Id" title="@FormatSavedConnectionLabel(s)">@FormatSavedConnectionOptionLabel(s)</option>
                     }
                 </select>
                 <div class="input-group input-group-sm mb-2">
@@ -37,7 +39,7 @@
                 <button type="button" class="btn btn-outline-primary btn-sm mt-2" @onclick="LoadSourceTablesAsync">Cargar tablas</button>
                 @if (sourceLoadError is not null)
                 {
-                    <div class="text-danger small mt-2">@sourceLoadError</div>
+                    <div class="text-danger small mt-2 text-break migration-run-error">@sourceLoadError</div>
                 }
             </div>
         </div>
@@ -51,7 +53,7 @@
                     <option value="">— Elegir —</option>
                     @foreach (var s in SqlServerSavedConnections)
                     {
-                        <option value="@s.Id">@FormatSavedConnectionLabel(s)</option>
+                        <option value="@s.Id" title="@FormatSavedConnectionLabel(s)">@FormatSavedConnectionOptionLabel(s)</option>
                     }
                 </select>
                 <div class="input-group input-group-sm mb-2">
@@ -62,7 +64,7 @@
                 <button type="button" class="btn btn-outline-primary btn-sm mt-2" @onclick="LoadTargetTablesAsync">Cargar tablas</button>
                 @if (targetLoadError is not null)
                 {
-                    <div class="text-danger small mt-2">@targetLoadError</div>
+                    <div class="text-danger small mt-2 text-break migration-run-error">@targetLoadError</div>
                 }
             </div>
         </div>
@@ -82,7 +84,7 @@
         }
         else
         {
-            <div class="table-responsive mb-3">
+            <div class="table-responsive mb-3" style="max-height: 250px;overflow: auto;">
                 <table class="table table-sm align-middle">
                     <thead><tr><th>Nombre</th><th>Tipo</th><th>Servidor</th><th>Base</th><th>Último uso</th><th></th></tr></thead>
                     <tbody>
@@ -91,16 +93,18 @@
                         <tr>
                             <td>@s.Name</td>
                             <td><span class="badge bg-secondary">@SavedConnectionKindLabel(s)</span></td>
-                            <td><code>@SavedConnectionServer(s)</code></td>
-                            <td><code>@SavedConnectionDatabase(s)</code></td>
-                            <td class="small">@s.LastUsedAt.ToLocalTime().ToString("g")</td>
-                            <td class="text-nowrap">
+                            <td class="text-break"><code>@SavedConnectionServer(s)</code></td>
+                            <td class="text-break"><code>@SavedConnectionDatabase(s)</code></td>
+                            <td class="small text-nowrap">@s.LastUsedAt.ToLocalTime().ToString("g")</td>
+                            <td>
+                                <div class="d-flex flex-wrap gap-1">
                                 @if (IsSqlServerSaved(s))
                                 {
                                     <button type="button" class="btn btn-link btn-sm py-0" @onclick="async () => await ApplyPresetToSourceAsync(s)">→ Origen</button>
                                     <button type="button" class="btn btn-link btn-sm py-0" @onclick="async () => await ApplyPresetToTargetAsync(s)">→ Destino</button>
                                 }
                                 <button type="button" class="btn btn-link btn-sm text-danger py-0" @onclick="async () => await DeleteSavedConnectionAsync(s.Id)">Quitar</button>
+                                </div>
                             </td>
                         </tr>
                     }
@@ -144,7 +148,7 @@
                 <option value="">— Elegir —</option>
                 @foreach (var t in sourceTables)
                 {
-                    <option value="@t.QualifiedName">@t.QualifiedName</option>
+                    <option value="@t.QualifiedName" class="@RegistryCssForDraftSourceOption(t.QualifiedName)">@t.QualifiedName</option>
                 }
             </InputSelect>
         </div>
@@ -154,7 +158,7 @@
                 <option value="">— Elegir —</option>
                 @foreach (var t in targetTables)
                 {
-                    <option value="@t.QualifiedName">@t.QualifiedName</option>
+                    <option value="@t.QualifiedName" class="@RegistryCssForDraftTargetOption(t.QualifiedName)">@t.QualifiedName</option>
                 }
             </InputSelect>
         </div>
@@ -190,9 +194,9 @@
 </div>
 
 <div class="card mb-3">
-    <div class="card-body row g-3 mb-3">
-        <div class="row mb-2">
-            <div class="col-12 d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <div class="card-body g-3 mb-3">
+        <div class="mb-2">
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
                 <div>
                     <h3 class="h6 mt-3 mb-0">Mapeo de columnas</h3>
                     <p class="small text-muted mb-0">
@@ -203,7 +207,7 @@
                 <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AddColumnRow">+ Fila</button>
             </div>
         </div>
-        <div class="row small fw-semibold text-muted mb-1 d-none d-md-flex gx-2 border-bottom">
+        <div class="row small fw-semibold text-muted mb-1 d-none d-md-flex gx-2 border-bottom mx-0">
             <div class="col-md-3">Campo origen</div>
             <div class="col-md-4">Transformación SQL</div>
             <div class="col-md-3">Campo destino</div>
@@ -303,19 +307,20 @@ else
                         <label class="form-check-label visually-hidden" for="@($"sel_{idx}")">Seleccionar @t.Source</label>
                     </div>
                     <div class="flex-grow-1">
-                        <strong>@t.Source</strong>
+                        <span class="@(RegistryCssForMapping(t) ?? "")"><strong>@t.Source</strong></span>
                         <span class="text-muted">→</span>
-                        <strong>@t.Target</strong>
+                        <span class="@(RegistryCssForMapping(t) ?? "")"><strong>@t.Target</strong></span>
                         <span class="badge bg-secondary ms-2">@t.Mode</span>
-                        <div class="small text-muted">@t.Columns.Count columnas · @(t.Columns.Count(c => !string.IsNullOrWhiteSpace(c.SourceExpression))) con transformación SQL · claves: @(t.KeyColumns.Count == 0 ? "—" : string.Join(", ", t.KeyColumns))@(IdentityOptionsSuffix(t))</div>
+                        <div class="small text-muted text-break">@t.Columns.Count columnas · @(t.Columns.Count(c => !string.IsNullOrWhiteSpace(c.SourceExpression))) con transformación SQL · claves: @(t.KeyColumns.Count == 0 ? "—" : string.Join(", ", t.KeyColumns))@(IdentityOptionsSuffix(t))</div>
+                        <button type="button" class="btn btn-link btn-sm py-0" @onclick="() => EditTableInDraftAsync(t)">Editar en borrador</button>
                         @if (lastRunBySource.TryGetValue(t.Source, out var st))
                         {
-                            <div class="small @(st.Success ? "text-success" : "text-danger")">
+                            <div class="small text-break @(st.Success ? "text-success" : "text-danger")">
                                 Última ejecución: @(st.DryRun ? "dry-run" : "real") · @(st.Success ? "OK" : "Error")
                                 · @st.At.ToLocalTime().ToString("g")
                                 @if (!string.IsNullOrEmpty(st.Message))
                                 {
-                                    <span> — @st.Message</span>
+                                    <span class="migration-run-error"> — @st.Message</span>
                                 }
                             </div>
                         }
@@ -335,6 +340,7 @@ else
             <p class="small text-muted mb-2">
                 <strong>Dry-run</strong>: solo cuenta filas y valida conexión (no escribe). <strong>Real</strong>: modifica el destino según el modo de cada tabla.
                 Puedes enviar <strong>varias tablas en un solo POST</strong> (lote) o <strong>una petición por tabla</strong> (uno a uno).
+                Las tablas marcadas como <span class="text-success">completadas</span> en el registro <strong>sí se pueden volver a ejecutar</strong>; se mostrará una advertencia de confirmación.
             </p>
             <div class="d-flex flex-wrap gap-2">
                 <button type="button" class="btn btn-outline-info" @onclick="() => ExecuteBatchAsync(true)" disabled="@ExecuteDisabled">Dry-run (lote)</button>
@@ -348,6 +354,9 @@ else
         </div>
     </div>
 }
+
+<RegistryWorkPlanPanel Host="registry" Plan="plan" PlanTableCount="plan.Tables.Count" SourceKindLabel="SQL Server"
+                     OnLoadTableFromProgress="OnLoadTableFromRegistryProgressAsync" />
 
 <div class="card mb-4">
     <div class="card-header">Snapshots en este navegador</div>
@@ -397,13 +406,18 @@ else
 
 @if (!string.IsNullOrEmpty(statusMessage))
 {
-    <div class="alert alert-info mt-2" style="white-space: pre-wrap;">@statusMessage</div>
+    <div class="alert alert-info mt-2 text-break migration-run-error" style="white-space: pre-wrap;">@statusMessage</div>
 }
+
+</div>
 
 @code {
     private const string SnapshotsKey = "migrator.snapshots.v1";
     private const string RunStateKey = "migrator.runstate.v1";
     private const string SavedConnectionsKey = "migrator.savedConnections.v1";
+    private const string RegistryWorkPlanLegacyIdKey = "migrator.registryActiveWorkPlanId.v1";
+    private const string RegistryWorkPlanIdKey = "migrator.registryActiveWorkPlanId.v1.sqlServer";
+    private const string RegistryPageExpectedSourceKind = "sqlServer";
 
     private static readonly JsonSerializerOptions JsonRead = new() { PropertyNameCaseInsensitive = true };
     private static readonly JsonSerializerOptions JsonWrite = new() { WriteIndented = false };
@@ -419,12 +433,18 @@ else
         string.Equals(x.Kind, "sqlServer", StringComparison.OrdinalIgnoreCase);
 
     private static string SavedConnectionKindLabel(SavedConnectionEntry s) =>
-        string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) ? "MySQL"
+        string.Equals(s.Kind, "postgresql", StringComparison.OrdinalIgnoreCase) ? "PostgreSQL"
+        : string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) ? "MySQL"
         : string.Equals(s.Kind, "oracle", StringComparison.OrdinalIgnoreCase) ? "Oracle"
         : "SQL Server";
 
     private static string SavedConnectionServer(SavedConnectionEntry s)
     {
+        if (string.Equals(s.Kind, "postgresql", StringComparison.OrdinalIgnoreCase) && s.PostgreSql is not null)
+        {
+            return $"{s.PostgreSql.Server}:{s.PostgreSql.Port}";
+        }
+
         if (string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && s.MySql is not null)
         {
             return $"{s.MySql.Server}:{s.MySql.Port}";
@@ -440,6 +460,11 @@ else
 
     private static string SavedConnectionDatabase(SavedConnectionEntry s)
     {
+        if (string.Equals(s.Kind, "postgresql", StringComparison.OrdinalIgnoreCase) && s.PostgreSql is not null)
+        {
+            return s.PostgreSql.Database;
+        }
+
         if (string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && s.MySql is not null)
         {
             return s.MySql.Database;
@@ -480,6 +505,10 @@ else
     private string snapshotName = string.Empty;
     private bool storageLoaded;
 
+    private readonly RegistryMappingHost registry = new();
+    private string? activeSourceConnectionId;
+    private string? activeTargetConnectionId;
+
     private List<SavedConnectionEntry> savedConnections = new();
     private string newPresetNameSource = string.Empty;
     private string newPresetNameTarget = string.Empty;
@@ -494,8 +523,42 @@ else
         }
 
         storageLoaded = true;
+        registry.Configure(HttpFactory, Js, RegistryWorkPlanIdKey, RegistryPageExpectedSourceKind);
+        registry.SetStatusMessage = msg => { statusMessage = msg; };
+        registry.NotifyStateChanged = () => InvokeAsync(StateHasChanged);
+        registry.ApplyPlanDetail = ApplyRegistryPlanDetailAsync;
         await LoadBrowserStorageAsync();
+        await registry.LoadActiveIdFromStorageAsync();
+        await registry.RefreshRemoteAsync();
         StateHasChanged();
+    }
+
+    private async Task ApplyRegistryPlanDetailAsync(RegistryWorkPlanDetailDto detail)
+    {
+        var p = MigrationPlanJson.Deserialize(MigrationPlanJson.Serialize(detail.Plan));
+        plan.SourceKind = "sqlServer";
+        plan.MySqlSource = null;
+        plan.OracleSource = null;
+        plan.PostgreSqlSource = null;
+        plan.Source = p.Source;
+        plan.Target = p.Target;
+        plan.Tables.Clear();
+        plan.Tables.AddRange(p.Tables);
+        registry.SourceConnectionId = detail.Summary.SourceConnectionId ?? activeSourceConnectionId;
+        registry.TargetConnectionId = detail.Summary.TargetConnectionId ?? activeTargetConnectionId;
+        activeSourceConnectionId = registry.SourceConnectionId;
+        activeTargetConnectionId = registry.TargetConnectionId;
+        selectedForRun.Clear();
+        foreach (var t in plan.Tables)
+        {
+            selectedForRun.Add(t.Source);
+        }
+
+        sourceTables = new List<SchemaTableDto>();
+        targetTables = new List<SchemaTableDto>();
+        sourceColumns = new List<SchemaColumnDto>();
+        targetColumns = new List<SchemaColumnDto>();
+        await Task.CompletedTask;
     }
 
     private async Task LoadBrowserStorageAsync()
@@ -529,6 +592,15 @@ else
                 {
                     savedConnections = envelope.Connections;
                     NormalizeSavedConnectionKinds();
+                }
+            }
+
+            if (registry.ActiveWorkPlanId is null)
+            {
+                var regRaw = await Js.InvokeAsync<string?>("migratorLocalStorage.getItem", RegistryWorkPlanLegacyIdKey);
+                if (Guid.TryParse(regRaw, out var legacyId))
+                {
+                    registry.ActiveWorkPlanId = legacyId;
                 }
             }
         }
@@ -570,17 +642,19 @@ else
                      && !string.IsNullOrWhiteSpace(c.Oracle.Server)
                      && !string.IsNullOrWhiteSpace(c.Oracle.ServiceName)
                 ? "oracle"
+                : c.PostgreSql is not null && !string.IsNullOrWhiteSpace(c.PostgreSql.Server)
+                    ? "postgresql"
                 : c.MySql is not null && !string.IsNullOrWhiteSpace(c.MySql.Server)
                     ? "mySql"
                     : "sqlServer";
         }
     }
 
-    private void UpsertConnectionFromUsage(SqlServerConnectionInfo info, string? preferredName = null)
+    private string? UpsertConnectionFromUsage(SqlServerConnectionInfo info, string? preferredName = null)
     {
         if (string.IsNullOrWhiteSpace(info.Server) || string.IsNullOrWhiteSpace(info.Database))
         {
-            return;
+            return null;
         }
 
         var fp = SavedConnectionFingerprint.Of(info);
@@ -594,32 +668,41 @@ else
             existing.Connection = CloneConn(info);
             existing.MySql = null;
             existing.Oracle = null;
+            existing.PostgreSql = null;
             existing.LastUsedAt = DateTimeOffset.UtcNow;
             if (!string.IsNullOrWhiteSpace(preferredName))
             {
                 existing.Name = preferredName.Trim();
             }
 
-            return;
+            return existing.Id;
         }
 
         var name = !string.IsNullOrWhiteSpace(preferredName)
             ? preferredName!.Trim()
             : $"{info.Server.Trim()} · {info.Database.Trim()}";
 
-        savedConnections.Add(new SavedConnectionEntry
+        var entry = new SavedConnectionEntry
         {
             Kind = "sqlServer",
             Name = name,
             Connection = CloneConn(info),
             MySql = null,
             Oracle = null,
+            PostgreSql = null,
             LastUsedAt = DateTimeOffset.UtcNow,
-        });
+        };
+        savedConnections.Add(entry);
+        return entry.Id;
     }
 
     private static string FormatSavedConnectionLabel(SavedConnectionEntry s)
     {
+        if (string.Equals(s.Kind, "postgresql", StringComparison.OrdinalIgnoreCase) && s.PostgreSql is not null)
+        {
+            return $"{s.Name} ({s.PostgreSql.Server}:{s.PostgreSql.Port} · {s.PostgreSql.Database})";
+        }
+
         if (string.Equals(s.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && s.MySql is not null)
         {
             return $"{s.Name} ({s.MySql.Server}:{s.MySql.Port} · {s.MySql.Database})";
@@ -636,6 +719,19 @@ else
         }
 
         return s.Name;
+    }
+
+    private static string FormatSavedConnectionOptionLabel(SavedConnectionEntry s) =>
+        TruncateForSelect(FormatSavedConnectionLabel(s), 72);
+
+    private static string TruncateForSelect(string text, int maxLength)
+    {
+        if (string.IsNullOrEmpty(text) || text.Length <= maxLength)
+        {
+            return text;
+        }
+
+        return text[..(maxLength - 1)] + "…";
     }
 
     private void UpsertMySqlConnectionFromUsage(MySqlConnectionInfo info, string? preferredName = null)
@@ -657,6 +753,7 @@ else
             existing.MySql = CloneMySql(info);
             existing.Connection = null;
             existing.Oracle = null;
+            existing.PostgreSql = null;
             existing.LastUsedAt = DateTimeOffset.UtcNow;
             if (!string.IsNullOrWhiteSpace(preferredName))
             {
@@ -677,6 +774,7 @@ else
             Connection = null,
             MySql = CloneMySql(info),
             Oracle = null,
+            PostgreSql = null,
             LastUsedAt = DateTimeOffset.UtcNow,
         });
     }
@@ -686,6 +784,61 @@ else
         {
             Server = c.Server,
             Port = c.Port is >= 1 and <= 65535 ? c.Port : 3306,
+            Database = c.Database,
+            UserId = c.UserId,
+            Password = c.Password,
+        };
+
+    private void UpsertPostgreSqlConnectionFromUsage(PostgreSqlConnectionInfo info, string? preferredName = null)
+    {
+        if (string.IsNullOrWhiteSpace(info.Server) || string.IsNullOrWhiteSpace(info.Database))
+        {
+            return;
+        }
+
+        var fp = SavedConnectionFingerprint.Of(info);
+        var existing = savedConnections.FirstOrDefault(x =>
+            string.Equals(x.Kind, "postgresql", StringComparison.OrdinalIgnoreCase)
+            && x.PostgreSql is not null
+            && SavedConnectionFingerprint.Of(x.PostgreSql) == fp);
+
+        if (existing is not null)
+        {
+            existing.Kind = "postgresql";
+            existing.PostgreSql = ClonePostgreSql(info);
+            existing.Connection = null;
+            existing.MySql = null;
+            existing.Oracle = null;
+            existing.LastUsedAt = DateTimeOffset.UtcNow;
+            if (!string.IsNullOrWhiteSpace(preferredName))
+            {
+                existing.Name = preferredName.Trim();
+            }
+
+            return;
+        }
+
+        var name = !string.IsNullOrWhiteSpace(preferredName)
+            ? preferredName!.Trim()
+            : $"{info.Server.Trim()}:{info.Port} · {info.Database.Trim()}";
+
+        savedConnections.Add(new SavedConnectionEntry
+        {
+            Kind = "postgresql",
+            Name = name,
+            Connection = null,
+            MySql = null,
+            Oracle = null,
+            PostgreSql = ClonePostgreSql(info),
+            LastUsedAt = DateTimeOffset.UtcNow,
+        });
+    }
+
+    private static PostgreSqlConnectionInfo ClonePostgreSql(PostgreSqlConnectionInfo c) =>
+        new()
+        {
+            Server = c.Server,
+            Port = c.Port is >= 1 and <= 65535 ? c.Port : 5432,
             Database = c.Database,
             UserId = c.UserId,
             Password = c.Password,
@@ -715,6 +868,7 @@ else
             existing.Oracle = CloneOracle(info);
             existing.Connection = null;
             existing.MySql = null;
+            existing.PostgreSql = null;
             existing.LastUsedAt = DateTimeOffset.UtcNow;
             if (!string.IsNullOrWhiteSpace(preferredName))
             {
@@ -735,6 +889,7 @@ else
             Connection = null,
             MySql = null,
             Oracle = CloneOracle(info),
+            PostgreSql = null,
             LastUsedAt = DateTimeOffset.UtcNow,
         });
     }
@@ -764,6 +919,8 @@ else
         }
 
         plan.Source = CloneConn(entry.Connection);
+        activeSourceConnectionId = entry.Id;
+        registry.SourceConnectionId = entry.Id;
         entry.LastUsedAt = DateTimeOffset.UtcNow;
         await PersistSavedConnectionsAsync();
         statusMessage = $"Origen rellenado desde: {entry.Name}";
@@ -784,6 +941,8 @@ else
         }
 
         plan.Target = CloneConn(entry.Connection);
+        activeTargetConnectionId = entry.Id;
+        registry.TargetConnectionId = entry.Id;
         entry.LastUsedAt = DateTimeOffset.UtcNow;
         await PersistSavedConnectionsAsync();
         statusMessage = $"Destino rellenado desde: {entry.Name}";
@@ -797,7 +956,8 @@ else
             return;
         }
 
-        UpsertConnectionFromUsage(plan.Source, string.IsNullOrWhiteSpace(newPresetNameSource) ? null : newPresetNameSource.Trim());
+        activeSourceConnectionId = UpsertConnectionFromUsage(plan.Source, string.IsNullOrWhiteSpace(newPresetNameSource) ? null : newPresetNameSource.Trim());
+        registry.SourceConnectionId = activeSourceConnectionId;
         newPresetNameSource = string.Empty;
         await PersistSavedConnectionsAsync();
         statusMessage = "Conexión de origen guardada en la biblioteca.";
@@ -811,7 +971,8 @@ else
             return;
         }
 
-        UpsertConnectionFromUsage(plan.Target, string.IsNullOrWhiteSpace(newPresetNameTarget) ? null : newPresetNameTarget.Trim());
+        activeTargetConnectionId = UpsertConnectionFromUsage(plan.Target, string.IsNullOrWhiteSpace(newPresetNameTarget) ? null : newPresetNameTarget.Trim());
+        registry.TargetConnectionId = activeTargetConnectionId;
         newPresetNameTarget = string.Empty;
         await PersistSavedConnectionsAsync();
         statusMessage = "Conexión de destino guardada en la biblioteca.";
@@ -825,6 +986,8 @@ else
         }
 
         plan.Source = CloneConn(s.Connection);
+        activeSourceConnectionId = s.Id;
+        registry.SourceConnectionId = s.Id;
         s.LastUsedAt = DateTimeOffset.UtcNow;
         await PersistSavedConnectionsAsync();
         statusMessage = $"Origen: {s.Name}";
@@ -838,6 +1001,8 @@ else
         }
 
         plan.Target = CloneConn(s.Connection);
+        activeTargetConnectionId = s.Id;
+        registry.TargetConnectionId = s.Id;
         s.LastUsedAt = DateTimeOffset.UtcNow;
         await PersistSavedConnectionsAsync();
         statusMessage = $"Destino: {s.Name}";
@@ -880,7 +1045,11 @@ else
             foreach (var row in imported.Connections)
             {
                 NormalizeImportedConnectionRow(row);
-                if (string.Equals(row.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && row.MySql is not null)
+                if (string.Equals(row.Kind, "postgresql", StringComparison.OrdinalIgnoreCase) && row.PostgreSql is not null)
+                {
+                    UpsertPostgreSqlConnectionFromUsage(row.PostgreSql, string.IsNullOrWhiteSpace(row.Name) ? null : row.Name.Trim());
+                }
+                else if (string.Equals(row.Kind, "mySql", StringComparison.OrdinalIgnoreCase) && row.MySql is not null)
                 {
                     UpsertMySqlConnectionFromUsage(row.MySql, string.IsNullOrWhiteSpace(row.Name) ? null : row.Name.Trim());
                 }
@@ -912,6 +1081,8 @@ else
                      && !string.IsNullOrWhiteSpace(row.Oracle.Server)
                      && !string.IsNullOrWhiteSpace(row.Oracle.ServiceName)
                 ? "oracle"
+                : row.PostgreSql is not null && !string.IsNullOrWhiteSpace(row.PostgreSql.Server)
+                    ? "postgresql"
                 : row.MySql is not null && !string.IsNullOrWhiteSpace(row.MySql.Server)
                     ? "mySql"
                     : "sqlServer";
@@ -958,15 +1129,20 @@ else
 
     private async Task ExecuteBatchAsync(bool dryRun)
     {
-        if (!dryRun && !await Js.InvokeAsync<bool>("confirm", "¿Ejecutar migración REAL en el destino para las tablas seleccionadas?"))
-        {
-            return;
-        }
-
         var tables = GetSelectedMappings();
         if (tables.Count == 0)
         {
             statusMessage = "Selecciona al menos una tabla en el plan.";
+            return;
+        }
+
+        if (!await MappingExecutionHelper.ConfirmExecutionAsync(
+                Js,
+                registry,
+                tables,
+                dryRun,
+                "¿Ejecutar migración REAL en el destino para las tablas seleccionadas?"))
+        {
             return;
         }
 
@@ -976,15 +1152,20 @@ else
 
     private async Task ExecuteSequentialAsync(bool dryRun)
     {
-        if (!dryRun && !await Js.InvokeAsync<bool>("confirm", "¿Ejecutar migración REAL tabla por tabla en el destino?"))
-        {
-            return;
-        }
-
         var tables = GetSelectedMappings();
         if (tables.Count == 0)
         {
             statusMessage = "Selecciona al menos una tabla en el plan.";
+            return;
+        }
+
+        if (!await MappingExecutionHelper.ConfirmExecutionAsync(
+                Js,
+                registry,
+                tables,
+                dryRun,
+                "¿Ejecutar migración REAL tabla por tabla en el destino?"))
+        {
             return;
         }
 
@@ -1013,6 +1194,7 @@ else
             }
 
             MergeRunResults(summary, dryRun);
+            await registry.TryRecordExecutionAsync(plan, summary, dryRun);
             foreach (var row in summary.Tables ?? Array.Empty<TableMigrationResult>())
             {
                 sb.AppendLine($"{row.Source}: {(row.Error is null ? $"OK, filas {row.RowsRead}" : row.Error)}");
@@ -1020,6 +1202,8 @@ else
         }
 
         await PersistRunStateAsync();
+        await registry.RefreshLastProgressAndHistoryAsync();
+
         statusMessage = "Ejecución uno a uno:\n" + sb;
         StateHasChanged();
     }
@@ -1078,7 +1262,9 @@ else
             }
 
             MergeRunResults(summary, dryRun);
+            await registry.TryRecordExecutionAsync(plan, summary, dryRun);
             await PersistRunStateAsync();
+            await registry.RefreshLastProgressAndHistoryAsync();
 
             var lines = (summary.Tables ?? Array.Empty<TableMigrationResult>()).Select(t =>
                 $"{t.Source}: {(t.Error is null ? $"filas leídas {t.RowsRead}" : t.Error)}");
@@ -1092,6 +1278,27 @@ else
         {
             statusMessage = ex.Message;
         }
+    }
+
+    private string? RegistryCssForMapping(TableMapping t) => registry.CssForPair(t.Source, t.Target);
+
+    private string? RegistryCssForDraftSourceOption(string qualifiedName)
+    {
+        var m = plan.Tables.FirstOrDefault(x => string.Equals(x.Source, qualifiedName, StringComparison.OrdinalIgnoreCase));
+        return m is null ? null : registry.CssForPair(m.Source, m.Target);
+    }
+
+    private string? RegistryCssForDraftTargetOption(string qualifiedName)
+    {
+        if (string.IsNullOrWhiteSpace(draftSource))
+        {
+            return null;
+        }
+
+        var m = plan.Tables.FirstOrDefault(x =>
+            string.Equals(x.Source, draftSource, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(x.Target, qualifiedName, StringComparison.OrdinalIgnoreCase));
+        return m is null ? null : registry.CssForPair(m.Source, m.Target);
     }
 
     private void MergeRunResults(MigrationExecutionSummary summary, bool dryRun)
@@ -1186,8 +1393,12 @@ else
         sourceLoadError = err;
         if (err is null)
         {
-            UpsertConnectionFromUsage(plan.Source);
+            activeSourceConnectionId = UpsertConnectionFromUsage(plan.Source);
+            registry.SourceConnectionId = activeSourceConnectionId;
             await PersistSavedConnectionsAsync();
+            registry.NotifySourceTablesLoaded(sourceTables.Count > 0);
+            await registry.TryResolveByEndpointsAsync(plan);
+            await registry.RefreshLastProgressAndHistoryAsync();
         }
     }
 
@@ -1199,8 +1410,12 @@ else
         targetLoadError = err;
         if (err is null)
         {
-            UpsertConnectionFromUsage(plan.Target);
+            activeTargetConnectionId = UpsertConnectionFromUsage(plan.Target);
+            registry.TargetConnectionId = activeTargetConnectionId;
             await PersistSavedConnectionsAsync();
+            registry.NotifyTargetTablesLoaded(targetTables.Count > 0);
+            await registry.TryResolveByEndpointsAsync(plan);
+            await registry.RefreshLastProgressAndHistoryAsync();
         }
     }
 
@@ -1506,6 +1721,12 @@ else
             return;
         }
 
+        if (imported.UsesPostgresqlSource())
+        {
+            statusMessage = "Este archivo es de migración PostgreSQL → SQL Server. Ábrelo desde el menú PostgreSQL.";
+            return;
+        }
+
         plan.Source = imported.Source ?? new SqlServerConnectionInfo();
         plan.Target = imported.Target ?? new SqlServerConnectionInfo();
         plan.Tables.Clear();
@@ -1528,7 +1749,99 @@ else
         UpsertConnectionFromUsage(plan.Target);
         await PersistSavedConnectionsAsync();
 
-        statusMessage = $"Importado: {plan.Tables.Count} tabla(s). Conexiones añadidas/actualizadas en la biblioteca. Marca cuáles ejecutar y usa dry-run antes del real.";
+        var draftLoaded = TryApplyDraftFromImportedPlan();
+        var draftRowCount = columnRows.Count;
+        if (draftLoaded && !string.IsNullOrWhiteSpace(draftSource) && !string.IsNullOrWhiteSpace(draftTarget))
+        {
+            await LoadDraftColumnsAsync();
+        }
+
+        statusMessage = draftLoaded
+            ? $"Importado: {plan.Tables.Count} tabla(s). Borrador cargado para {draftSource} → {draftTarget} ({draftRowCount} filas) desde el JSON."
+              + (string.IsNullOrWhiteSpace(statusMessage) ? string.Empty : $" {statusMessage}")
+            : $"Importado: {plan.Tables.Count} tabla(s). Conexiones añadidas/actualizadas en la biblioteca. Marca cuáles ejecutar y usa dry-run antes del real.";
+    }
+
+    private bool TryApplyDraftFromImportedPlan()
+    {
+        if (string.IsNullOrWhiteSpace(draftSource) || string.IsNullOrWhiteSpace(draftTarget))
+        {
+            return false;
+        }
+
+        var match = plan.Tables.FirstOrDefault(t =>
+            string.Equals(t.Source.Trim(), draftSource.Trim(), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(t.Target.Trim(), draftTarget.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        if (match is null)
+        {
+            return false;
+        }
+
+        ApplyDraftFromTableMapping(match);
+        return true;
+    }
+
+    private async Task EditTableInDraftAsync(TableMapping table)
+    {
+        ApplyDraftFromTableMapping(table);
+        if (!string.IsNullOrWhiteSpace(plan.Source.Server)
+            && !string.IsNullOrWhiteSpace(plan.Target.Server))
+        {
+            await LoadDraftColumnsAsync();
+        }
+
+        statusMessage = $"Borrador: {table.Source} → {table.Target}";
+        StateHasChanged();
+    }
+
+    private async Task OnLoadTableFromRegistryProgressAsync(RegistryTableProgressDto progress)
+    {
+        var mapping = RegistryProgressTableLoader.ResolveMapping(progress, plan);
+        RegistryProgressTableLoader.MergeIntoPlan(mapping, plan);
+        selectedForRun.Add(mapping.Source);
+        ApplyDraftFromTableMapping(mapping);
+        if (!string.IsNullOrWhiteSpace(plan.Source.Server)
+            && !string.IsNullOrWhiteSpace(plan.Target.Server)
+            && !string.IsNullOrWhiteSpace(draftSource)
+            && !string.IsNullOrWhiteSpace(draftTarget))
+        {
+            await LoadDraftColumnsAsync();
+        }
+
+        statusMessage =
+            $"Tabla cargada desde registro ({RegistryMappingHost.StatusLabel(progress.Status)}): {mapping.Source} → {mapping.Target}. "
+            + "Mapeo aplicado al borrador; puedes corregir columnas y volver a ejecutar.";
+        StateHasChanged();
+    }
+
+    private void ApplyDraftFromTableMapping(TableMapping table)
+    {
+        draftSource = table.Source;
+        draftTarget = table.Target;
+        draftMode = string.IsNullOrWhiteSpace(table.Mode) ? "insert" : table.Mode.Trim();
+        draftKeys = table.KeyColumns.Count == 0
+            ? string.Empty
+            : string.Join(", ", table.KeyColumns.Where(static k => !string.IsNullOrWhiteSpace(k)));
+        draftReseedToZero = table.ReseedToZero;
+        draftPreserveIdentityValues = table.PreserveIdentityValues;
+
+        columnRows.Clear();
+        foreach (var col in table.Columns)
+        {
+            columnRows.Add(new ColumnRow
+            {
+                Source = col.Source ?? string.Empty,
+                Target = col.Target ?? string.Empty,
+                SourceExpression = col.SourceExpression ?? string.Empty,
+            });
+        }
+
+        if (columnRows.Count == 0)
+        {
+            columnRows.Add(new ColumnRow());
+            columnRows.Add(new ColumnRow());
+        }
     }
 
     private static string IdentityOptionsSuffix(TableMapping t)

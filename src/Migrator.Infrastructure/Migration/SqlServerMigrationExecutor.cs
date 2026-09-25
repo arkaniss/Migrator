@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Migrator.Core;
 using Migrator.Infrastructure.Data;
 using MySqlConnector;
+using Npgsql;
 using Oracle.ManagedDataAccess.Client;
 
 namespace Migrator.Infrastructure.Migration;
@@ -20,6 +21,7 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         SqlServer,
         MySql,
         Oracle,
+        PostgreSql,
     }
 
     public async Task<MigrationExecutionSummary> ExecuteAsync(
@@ -40,6 +42,8 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
 
         var dialect = plan.UsesOracleSource()
             ? SourceDialect.Oracle
+            : plan.UsesPostgresqlSource()
+                ? SourceDialect.PostgreSql
             : plan.UsesMySqlSource()
                 ? SourceDialect.MySql
                 : SourceDialect.SqlServer;
@@ -58,6 +62,33 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
                 try
                 {
                     row = await ProcessTableAsync(oracle, dialect, targetSql, table, options, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    overallSuccess = false;
+                    row = new TableMigrationResult(table.Source, table.Target, 0, 0, ex.Message);
+                }
+
+                results.Add(row);
+                if (row.Error is not null)
+                {
+                    overallSuccess = false;
+                    break;
+                }
+            }
+        }
+        else if (plan.UsesPostgresqlSource())
+        {
+            var pgCs = PostgreSqlConnectionStringFactory.Build(plan.PostgreSqlSource!);
+            await using var pg = new NpgsqlConnection(pgCs);
+            await pg.OpenAsync(cancellationToken);
+
+            foreach (var table in plan.Tables)
+            {
+                TableMigrationResult row;
+                try
+                {
+                    row = await ProcessTableAsync(pg, dialect, targetSql, table, options, cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -144,6 +175,7 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         {
             SourceDialect.MySql => MySqlIdentifier.Qualify(table.Source),
             SourceDialect.Oracle => OracleIdentifier.Qualify(table.Source),
+            SourceDialect.PostgreSql => PostgreSqlIdentifier.Qualify(table.Source),
             _ => SqlIdentifier.Qualify(table.Source),
         };
         var targetQualified = SqlIdentifier.Qualify(table.Target);
@@ -155,6 +187,13 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             return new TableMigrationResult(table.Source, table.Target, rowsRead, 0, null);
         }
 
+        // DBCC CHECKIDENT (RESEED) es DDL: dentro de una transacción puede invalidarla si falla
+        // y dejar el SqlTransaction en estado "completado" para el resto de comandos.
+        if (table.ReseedToZero)
+        {
+            await TryReseedIdentityToZeroAsync(targetConn, table.Target, cancellationToken);
+        }
+
         await using var tx = (SqlTransaction)await targetConn.BeginTransactionAsync(cancellationToken);
 
         try
@@ -162,11 +201,6 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             if (IsTruncateReload(table.Mode))
             {
                 await TryTruncateTargetAsync(targetConn, tx, targetQualified, cancellationToken);
-            }
-
-            if (table.ReseedToZero)
-            {
-                await TryReseedIdentityToZeroAsync(targetConn, tx, table.Target, cancellationToken);
             }
 
             if (IsUpsert(table.Mode))
@@ -199,8 +233,20 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         }
         catch
         {
-            await tx.RollbackAsync(cancellationToken);
+            await TryRollbackAsync(tx, cancellationToken);
             throw;
+        }
+    }
+
+    private static async Task TryRollbackAsync(SqlTransaction tx, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await tx.RollbackAsync(cancellationToken);
+        }
+        catch (InvalidOperationException)
+        {
+            /* transacción ya confirmada o invalidada (p. ej. error previo en la misma tx) */
         }
     }
 
@@ -210,7 +256,9 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
         string sourceQualified,
         CancellationToken cancellationToken)
     {
-        var countExpr = sourceDialect is SourceDialect.MySql or SourceDialect.Oracle ? "COUNT(*)" : "COUNT_BIG(1)";
+        var countExpr = sourceDialect is SourceDialect.MySql or SourceDialect.Oracle or SourceDialect.PostgreSql
+            ? "COUNT(*)"
+            : "COUNT_BIG(1)";
         var fromAndAlias = sourceDialect == SourceDialect.Oracle
             ? $" FROM {sourceQualified} s"
             : $" FROM {sourceQualified} AS s";
@@ -248,7 +296,6 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
 
     private static async Task TryReseedIdentityToZeroAsync(
         SqlConnection targetConn,
-        SqlTransaction tx,
         string targetQualifiedName,
         CancellationToken cancellationToken)
     {
@@ -262,7 +309,7 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             WHERE s.name = @schema AND t.name = @table;
             """;
 
-        await using (var check = new SqlCommand(hasIdentitySql, targetConn, tx) { CommandTimeout = 60 })
+        await using (var check = new SqlCommand(hasIdentitySql, targetConn) { CommandTimeout = 60 })
         {
             check.Parameters.AddWithValue("@schema", schema);
             check.Parameters.AddWithValue("@table", table);
@@ -273,17 +320,13 @@ public sealed class SqlServerMigrationExecutor : IMigrationExecutor
             }
         }
 
-        var qualified = $"{schema}.{table}";
-        var sql = """
-            DECLARE @q sysname = @qualified;
-            DECLARE @stmt nvarchar(max) = N'DBCC CHECKIDENT(''' + @q + ''', RESEED, 1);';
-            EXEC(@stmt);
-            """;
-
+        var qualified = SqlIdentifier.Qualify(targetQualifiedName);
         try
         {
-            await using var cmd = new SqlCommand(sql, targetConn, tx) { CommandTimeout = 60 };
-            cmd.Parameters.AddWithValue("@qualified", qualified);
+            await using var cmd = new SqlCommand($"DBCC CHECKIDENT ({qualified}, RESEED, 1);", targetConn)
+            {
+                CommandTimeout = 60,
+            };
             await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
         catch (SqlException)
@@ -421,14 +464,25 @@ FROM {targetQualified};";
         {
             if (identityCol is not null)
             {
-                await using var offIdent = new SqlCommand(
-                    $"SET IDENTITY_INSERT {targetQualified} OFF;",
-                    targetConn,
-                    tx)
+                try
                 {
-                    CommandTimeout = 0,
-                };
-                await offIdent.ExecuteNonQueryAsync(cancellationToken);
+                    await using var offIdent = new SqlCommand(
+                        $"SET IDENTITY_INSERT {targetQualified} OFF;",
+                        targetConn,
+                        tx)
+                    {
+                        CommandTimeout = 0,
+                    };
+                    await offIdent.ExecuteNonQueryAsync(cancellationToken);
+                }
+                catch (SqlException)
+                {
+                    /* si MERGE falló, la transacción puede estar abortada */
+                }
+                catch (InvalidOperationException)
+                {
+                    /* transacción ya no válida */
+                }
             }
         }
 
@@ -475,6 +529,7 @@ FROM {targetQualified};";
         {
             SourceDialect.MySql => MySqlIdentifier.Backtick(columnName),
             SourceDialect.Oracle => OracleIdentifier.Quote(columnName),
+            SourceDialect.PostgreSql => PostgreSqlIdentifier.Quote(columnName),
             _ => SqlIdentifier.Bracket(columnName),
         };
 
@@ -502,6 +557,7 @@ FROM {targetQualified};";
         {
             SourceDialect.MySql => $"s.{MySqlIdentifier.Backtick(src)}",
             SourceDialect.Oracle => $"s.{OracleIdentifier.Quote(src)}",
+            SourceDialect.PostgreSql => $"s.{PostgreSqlIdentifier.Quote(src)}",
             _ => $"s.{SqlIdentifier.Bracket(src)}",
         };
     }

@@ -117,3 +117,31 @@ code {
 .div-bottom-separator {
     border-bottom: 2px solid #9893db !important;
 }
+
+/* Contenido de mapeo: evita desbordes horizontales por errores, código o expresiones SQL largas */
+.mapping-page-content {
+    max-width: 100%;
+    overflow-x: clip;
+}
+
+.mapping-page-content .form-select,
+.mapping-page-content .form-control {
+    max-width: 100%;
+    min-width: 0;
+}
+
+.mapping-page-content textarea.font-monospace {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.mapping-page-content code {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.mapping-run-error {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
